@@ -9,32 +9,21 @@ const getAI = () => {
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
-// Local library for INSTANT noise if the AI is slow
 const INSTANT_ROASTS = [
-  "Sema mokka performance! Even my grandmother plays better.",
+  "Sema mokka! Even my grandma plays better.",
   "Enna ya idhu? Logic-ae illama pesuringa!",
-  "Vera level... level-0 logically. Gubeer சிரிப்பு incoming!",
-  "I've seen smarter pieces of toast. Move it!",
-  "Ayyayo! That was a massive fail. Paavam!",
-  "Is this a family game or a meditation session? Someone join already!"
+  "Vera level... level-0 logically.",
+  "I've seen smarter toast. Move it!",
+  "Ayyayo! Massive fail. Paavam!",
+  "Is this a game or a funeral? Join already!"
 ];
 
 const getSystemInstruction = (state: GameState) => {
-  const sortedPlayers = [...state.players].sort((a, b) => b.score - a.score);
-  const leader = sortedPlayers[0];
-  
-  return `You are AJ, the savage, high-energy host of "MIND MASH". 
-  You are a legendary Tamil TV anchor with no filter.
-  
-  CONTEXT:
-  - Players: ${state.players.length}
-  - Lead: ${leader ? leader.name : "Nobody"}
-  
-  ROLES:
-  1. NEVER BE SILENT. If you're thinking, say something funny.
-  2. TAMIL SLANG: Gubeer, Mokka, Sema, Vera Level, Otha, Nanba, Thalaiva, Kashtam, Paavam.
-  3. AGE JABS: <15 = "Chutti", >40 = "Ancient Thaatha".
-  4. Max 8-10 words. Punchy. Explosive energy.`;
+  const leader = [...state.players].sort((a, b) => b.score - a.score)[0];
+  return `You are AJ, a savage Tamil TV host. Fast, funny, bilingual (English/Tamil).
+  Rules: Short sentences (max 10 words). Use slang: Gubeer, Mokka, Sema, Vera Level, Paavam.
+  Context: ${state.players.length} players. Leader: ${leader ? leader.name : "None"}.
+  Be explosive. No boring filler.`;
 };
 
 const withTimeout = <T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> => {
@@ -49,11 +38,11 @@ export const generateIntro = async (state: GameState) => {
   const res = await withTimeout(
     ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: "AJ, give a 1-sentence explosive, bilingual intro. Mention the room code.",
-      config: { systemInstruction: getSystemInstruction(state), thinkingConfig: { thinkingBudget: 0 } },
+      contents: "AJ, give a short explosive bilingual intro. Tell them to join.",
+      config: { systemInstruction: getSystemInstruction(state) },
     }),
     4000,
-    { text: "Welcome to MIND MASH! Scan the code and let's go. Vera Level energy venum!" } as any
+    { text: "Welcome to MIND MASH! Scan and join or you're a mokka piece!" } as any
   );
   return res.text || "Welcome to the show!";
 };
@@ -63,26 +52,23 @@ export const generateJoinComment = async (state: GameState, playerName: string, 
   const res = await withTimeout(
     ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: `Player "${playerName}" (${age}y/o) joined. Give a savage 5-word roast.`,
-      config: { systemInstruction: getSystemInstruction(state), thinkingConfig: { thinkingBudget: 0 } },
+      contents: `Player "${playerName}" (${age}) joined. 5-word roast.`,
+      config: { systemInstruction: getSystemInstruction(state) },
     }),
     3000,
-    { text: `${playerName} is here? Pack your bags everyone, the mokka king has arrived.` } as any
+    { text: `${playerName} is here? Paavam, everyone lose now.` } as any
   );
   return res.text || "Next victim joined!";
 };
 
 export const generateLobbyIdleComment = async (state: GameState) => {
   const ai = getAI();
-  const prompt = state.players.length === 0 
-    ? "No one has joined. Scream at them to scan the code."
-    : "Roast the slow players for not starting.";
-  
+  const prompt = state.players.length === 0 ? "No one joined. Scream." : "Roast the slow room.";
   const res = await withTimeout(
     ai.models.generateContent({
       model: MODEL_SPEEDY,
       contents: prompt,
-      config: { systemInstruction: getSystemInstruction(state), thinkingConfig: { thinkingBudget: 0 } },
+      config: { systemInstruction: getSystemInstruction(state) },
     }),
     3000,
     { text: INSTANT_ROASTS[Math.floor(Math.random() * INSTANT_ROASTS.length)] } as any
@@ -95,16 +81,15 @@ export const generateWarmup = async (state: GameState): Promise<{ question: stri
   const res = await withTimeout(
     ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: "Spicy icebreaker question in Tanglish.",
+      contents: "Spicy icebreaker question (Tanglish).",
       config: { 
         systemInstruction: getSystemInstruction(state),
         responseMimeType: "application/json",
-        thinkingConfig: { thinkingBudget: 0 },
         responseSchema: { type: Type.OBJECT, properties: { question: { type: Type.STRING } }, required: ['question'] }
       },
     }),
     6000,
-    { text: JSON.stringify({ question: "Who in this room is the biggest 'mokka' piece?" }) } as any
+    { text: JSON.stringify({ question: "Who is the biggest gossip here?" }) } as any
   );
   try { return JSON.parse(res.text || ''); } catch (e) { return { question: "Who is the laziest here?" }; }
 };
@@ -114,28 +99,25 @@ export const generateTopicOptions = async (state: GameState): Promise<string[]> 
   const res = await withTimeout(
     ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: "3 savage round topics.",
+      contents: "3 savage topics.",
       config: { 
         systemInstruction: getSystemInstruction(state),
         responseMimeType: "application/json",
-        thinkingConfig: { thinkingBudget: 0 },
         responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
       },
     }),
     6000,
-    { text: JSON.stringify(["Cinema Secrets", "Food Crimes", "Family Gossip"]) } as any
+    { text: JSON.stringify(["Cinema", "Food", "Secrets"]) } as any
   );
-  try { return JSON.parse(res.text || ''); } catch (e) { return ["Cinema", "Food", "Logic"]; }
+  try { return JSON.parse(res.text || ''); } catch (e) { return ["Cinema", "Food", "Gossip"]; }
 };
 
 export const generateQuestion = async (state: GameState): Promise<GameQuestion> => {
   const ai = getAI();
   const fallback: GameQuestion = {
-    textEn: "Which fruit is the King?",
-    textTa: "பழங்களின் ராஜா?",
+    textEn: "Which fruit is the King?", textTa: "பழங்களின் ராஜா?",
     options: [{en: "Apple", ta: "ஆப்பிள்"}, {en: "Mango", ta: "மாம்பழம்"}, {en: "Banana", ta: "வாழை"}, {en: "Grape", ta: "திராட்சை"}],
-    correctIndex: 1,
-    explanation: "Mango! Vera level taste."
+    correctIndex: 1, explanation: "Mango! Vera level."
   };
   const res = await withTimeout(
     ai.models.generateContent({
@@ -144,7 +126,6 @@ export const generateQuestion = async (state: GameState): Promise<GameQuestion> 
       config: { 
         systemInstruction: getSystemInstruction(state), 
         responseMimeType: "application/json",
-        thinkingConfig: { thinkingBudget: 0 },
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -167,11 +148,11 @@ export const generateRoast = async (state: GameState): Promise<string> => {
   const res = await withTimeout(
     ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: "Roast the current scores.",
-      config: { systemInstruction: getSystemInstruction(state), thinkingConfig: { thinkingBudget: 0 } },
+      contents: "Roast the scoreboard.",
+      config: { systemInstruction: getSystemInstruction(state) },
     }),
     5000,
-    { text: "Sema mokka scoring. Even my internet is faster than your brains." } as any
+    { text: "Sema mokka scoring. Shameful!" } as any
   );
   return res.text || "Round over!";
 };
@@ -184,7 +165,6 @@ export const speakText = async (text: string) => {
     if (sharedAudioCtx.state === 'suspended') await sharedAudioCtx.resume();
     
     const ai = getAI();
-    // Use a faster, slightly higher pitch for energy
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
       contents: [{ parts: [{ text }] }],
