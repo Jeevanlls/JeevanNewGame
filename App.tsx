@@ -5,7 +5,7 @@ import TVView from './components/TVView';
 import PhoneView from './components/PhoneView';
 import * as gemini from './geminiService';
 import { db } from './firebase';
-import { doc, onSnapshot, setDoc, updateDoc, getDoc, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { doc, onSnapshot, setDoc, updateDoc, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 const App: React.FC = () => {
   const [viewMode] = useState<'TV' | 'PHONE'>(() => {
@@ -19,118 +19,110 @@ const App: React.FC = () => {
   });
 
   const [playerId, setPlayerId] = useState<string>(() => localStorage.getItem('AJ_PLAYER_ID') || '');
-  const [hostMessage, setHostMessage] = useState<string>('AJ is booting up... Get ready for Mind Mash.');
+  const [hostMessage, setHostMessage] = useState<string>('MIND MASH: Loading AJ...');
   const [audioEnabled, setAudioEnabled] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   
-  const prevPlayerCount = useRef(0);
-
   const [state, setState] = useState<GameState>({
-    roomCode: roomCode, 
-    stage: GameStage.LOBBY, 
-    players: [], 
-    mode: GameMode.CONFIDENTLY_WRONG,
-    language: Language.MIXED, 
-    round: 1, 
-    history: [], 
-    topicOptions: []
+    roomCode: roomCode, stage: GameStage.LOBBY, players: [], mode: GameMode.CONFIDENTLY_WRONG,
+    language: Language.MIXED, round: 1, history: [], topicOptions: []
   });
+
+  const prevPlayerCount = useRef(0);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const lastActivityRef = useRef(Date.now());
+
+  // Lobby Idle Commentary Loop - Faster!
+  useEffect(() => {
+    if (viewMode !== 'TV' || !audioEnabled || state.stage !== GameStage.LOBBY) return;
+
+    const interval = setInterval(async () => {
+      const now = Date.now();
+      if (now - lastActivityRef.current > 15000) { // Every 15s if no activity
+        const comment = await gemini.generateLobbyIdleComment(state);
+        setHostMessage(comment);
+        gemini.speakText(comment);
+        lastActivityRef.current = now;
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [viewMode, audioEnabled, state.stage, state.players.length]);
 
   // Master Listener
   useEffect(() => {
     if (!roomCode || !db) return;
-    setIsSyncing(true);
     const unsub = onSnapshot(doc(db, "games", roomCode), (snapshot) => {
       if (snapshot.exists()) {
-        const data = snapshot.data() as GameState;
-        setState(data);
-        setIsSyncing(false);
-        setError(null);
-      } else if (viewMode === 'PHONE') {
-        setError("Room not found. Check the code on TV.");
+        setState(snapshot.data() as GameState);
       }
-    }, (err) => {
-      setError("Cloud connection lost.");
     });
     return unsub;
-  }, [roomCode, viewMode]);
+  }, [roomCode]);
 
-  // AJ Reacts to Players Joining the Lobby
+  // AJ Arrival Roasts
   useEffect(() => {
     if (viewMode === 'TV' && audioEnabled && state.stage === GameStage.LOBBY) {
       if (state.players.length > prevPlayerCount.current) {
         const lastPlayer = state.players[state.players.length - 1];
-        gemini.generateJoinComment(state, lastPlayer.name).then(roast => {
-          setHostMessage(roast);
-          gemini.speakText(roast);
+        gemini.generateJoinComment(state, lastPlayer.name, lastPlayer.age).then(msg => {
+          setHostMessage(msg);
+          gemini.speakText(msg);
+          lastActivityRef.current = Date.now();
         });
       }
       prevPlayerCount.current = state.players.length;
     }
-  }, [state.players.length, audioEnabled, viewMode]);
+  }, [state.players.length, audioEnabled, viewMode, state.stage]);
 
   // TV Initialization
   useEffect(() => {
     if (viewMode === 'TV' && !roomCode && db) {
       const code = Math.random().toString(36).substr(2, 4).toUpperCase();
       const initialState: GameState = {
-        roomCode: code, 
-        stage: GameStage.LOBBY, 
-        players: [], 
-        mode: GameMode.CONFIDENTLY_WRONG,
-        language: Language.MIXED, 
-        round: 1, 
-        history: [], 
-        topicOptions: []
+        roomCode: code, stage: GameStage.LOBBY, players: [], mode: GameMode.CONFIDENTLY_WRONG,
+        language: Language.MIXED, round: 1, history: [], topicOptions: []
       };
-      setDoc(doc(db, "games", code), initialState).then(() => {
-        setRoomCode(code);
-        setState(initialState);
-      });
+      setDoc(doc(db, "games", code), initialState).then(() => setRoomCode(code));
     }
   }, [viewMode, roomCode]);
 
   const sync = async (updates: Partial<GameState>) => {
     if (!db || !roomCode) return;
-    try {
-      await updateDoc(doc(db, "games", roomCode), updates);
-    } catch (e) { console.error("Cloud Sync Failed:", e); }
+    try { await updateDoc(doc(db, "games", roomCode), updates); } catch (e) {}
   };
 
   const handleStartShow = async () => {
     setAudioEnabled(true);
+    if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    await audioCtxRef.current.resume();
+    
     const intro = await gemini.generateIntro(state);
     setHostMessage(intro);
     gemini.speakText(intro);
+    lastActivityRef.current = Date.now();
   };
 
   const handleJoin = async (name: string, age: number, lang: Language) => {
     if (!db || !roomCode) return;
     const id = Math.random().toString(36).substr(2, 9);
     const newPlayer: Player = { id, name, age, score: 0, traits: [], preferredLanguage: lang };
-    
     try {
-      await runTransaction(db, async (transaction) => {
+      await runTransaction(db, async (t) => {
         const docRef = doc(db, "games", roomCode);
-        const snap = await transaction.get(docRef);
-        if (!snap.exists()) throw "Room Expired";
-        const currentPlayers = snap.data().players || [];
-        transaction.update(docRef, { players: [...currentPlayers, newPlayer] });
+        const snap = await t.get(docRef);
+        if (snap.exists()) {
+          const players = snap.data().players || [];
+          t.update(docRef, { players: [...players, newPlayer] });
+        }
       });
       setPlayerId(id);
       localStorage.setItem('AJ_PLAYER_ID', id);
-    } catch (e) { setError("Join failed. Is the room still active?"); }
-  };
-
-  const resetPhoneSession = () => {
-    localStorage.removeItem('AJ_PLAYER_ID');
-    setPlayerId('');
-    setError(null);
-    window.location.reload();
+    } catch (e) {}
   };
 
   const startWarmup = async () => {
+    setHostMessage("Hold on, let me look at you first...");
+    if (audioEnabled) gemini.speakText("Hold on, let me look at you first...");
     await sync({ stage: GameStage.LOADING });
     const warmup = await gemini.generateWarmup(state);
     await sync({ stage: GameStage.WARMUP, warmupQuestion: warmup.question });
@@ -138,6 +130,8 @@ const App: React.FC = () => {
   };
 
   const startTopicSelection = async () => {
+    setHostMessage("Calculated your IQ... it didn't take long.");
+    if (audioEnabled) gemini.speakText("Calculated your IQ... it didn't take long.");
     await sync({ stage: GameStage.LOADING });
     const master = state.players[Math.floor(Math.random() * state.players.length)];
     const options = await gemini.generateTopicOptions(state);
@@ -145,21 +139,21 @@ const App: React.FC = () => {
     const msg = `${master.name}, pick a category. Don't embarrass yourself.`;
     setHostMessage(msg);
     if (audioEnabled) gemini.speakText(msg);
-    setTimeout(() => sync({ stage: GameStage.TOPIC_SELECTION }), 2500);
+    setTimeout(() => sync({ stage: GameStage.TOPIC_SELECTION }), 2000);
   };
 
   const setTopic = async (topic: string) => {
+    setHostMessage(`Topic is ${topic}? Seriously? Sema Mokka choice.`);
+    if (audioEnabled) gemini.speakText(`Topic is ${topic}? Seriously? Sema Mokka choice.`);
     await sync({ topic, stage: GameStage.LOADING });
     const q = await gemini.generateQuestion({ ...state, topic });
-    await sync({ 
-      currentQuestion: q, stage: GameStage.QUESTION, 
-      players: state.players.map(p => ({ ...p, lastAnswer: '' })),
-      history: [...state.history, topic]
-    });
+    await sync({ currentQuestion: q, stage: GameStage.QUESTION, players: state.players.map(p => ({ ...p, lastAnswer: '' })) });
     if (audioEnabled) gemini.speakText(q.textEn);
   };
 
   const revealRound = async () => {
+    setHostMessage("Comparing your answers to actual intelligence...");
+    if (audioEnabled) gemini.speakText("Comparing your answers to actual intelligence...");
     await sync({ stage: GameStage.LOADING });
     const roast = await gemini.generateRoast(state);
     setHostMessage(roast);
@@ -169,47 +163,36 @@ const App: React.FC = () => {
 
   const endRound = async () => {
     const correct = (state.currentQuestion?.correctIndex || 0) + 1;
-    const updatedPlayers = state.players.map(p => {
-      let pts = (parseInt(p.lastAnswer || '0') === correct) ? 100 : 0;
-      return { ...p, score: p.score + pts };
-    });
+    const updatedPlayers = state.players.map(p => ({ ...p, score: p.score + (parseInt(p.lastAnswer || '0') === correct ? 100 : 0) }));
     await sync({ stage: GameStage.REVEAL, players: updatedPlayers, round: state.round + 1 });
   };
 
   return (
-    <div className="h-screen w-screen bg-[#020617] text-white overflow-hidden font-game">
+    <div className="h-screen w-screen bg-[#020617] text-white overflow-hidden font-game select-none">
       {viewMode === 'TV' ? (
-        <div className="h-full relative">
+        <div className="h-full relative overflow-hidden">
           <TVView state={state} hostMessage={hostMessage} iqData="" />
           
-          <div className="fixed top-4 right-4 flex gap-3 z-[200] items-center">
-             {error && <div className="bg-red-600 px-4 py-1 rounded-full text-[10px] font-black uppercase shadow-lg">{error}</div>}
-             <div className="flex items-center gap-2 bg-white/5 border border-white/10 px-3 py-1 rounded-full backdrop-blur-md">
-                <div className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500 shadow-[0_0_8px_#10b981]'}`}></div>
-                <span className="text-[10px] font-black opacity-30 uppercase tracking-widest">Cloud Live</span>
-             </div>
-          </div>
-
           {!audioEnabled ? (
-            <div className="fixed inset-0 bg-black/90 backdrop-blur-2xl flex flex-col items-center justify-center z-[500] p-10 text-center">
-              <div className="w-32 h-32 bg-fuchsia-600 rounded-full flex items-center justify-center text-6xl mb-10 shadow-[0_0_60px_rgba(192,38,211,0.5)] animate-pulse">🎤</div>
-              <h1 className="text-7xl font-black mb-10 italic tracking-tighter uppercase">WAKE UP AJ</h1>
-              <button onClick={handleStartShow} className="bg-fuchsia-600 hover:bg-fuchsia-500 px-24 py-12 rounded-[3rem] text-5xl font-black shadow-2xl border-4 border-white transition-all transform hover:scale-105 active:scale-95">START THE SHOW</button>
+            <div className="fixed inset-0 bg-black z-[1000] flex flex-col items-center justify-center p-20 text-center animate-in fade-in duration-1000">
+               <div className="w-64 h-64 bg-fuchsia-600 rounded-full flex items-center justify-center text-9xl mb-12 shadow-[0_0_150px_rgba(192,38,211,0.7)] animate-bounce border-8 border-white">🎤</div>
+               <h1 className="text-[12rem] font-black italic tracking-tighter uppercase leading-none mb-12 drop-shadow-3xl">MIND MASH</h1>
+               <button onClick={handleStartShow} className="bg-white text-black px-32 py-12 rounded-[3rem] text-6xl font-black shadow-3xl hover:scale-110 active:scale-95 transition-all border-8 border-fuchsia-500">WAKE UP AJ</button>
             </div>
           ) : (
-            <div className="fixed bottom-10 left-1/2 -translate-x-1/2 flex gap-4 pointer-events-auto z-[100]">
-               {state.stage === GameStage.LOBBY && state.players.length >= 1 && (
-                  <button onClick={startWarmup} className="bg-indigo-600 hover:bg-indigo-500 px-16 py-6 rounded-full text-3xl font-black shadow-2xl border-4 border-white/20 hover:scale-105 transition-all">LET'S GO</button>
+            <div className="fixed bottom-24 left-1/2 -translate-x-1/2 flex gap-8 z-[500] animate-in slide-in-from-bottom-20">
+               {state.stage === GameStage.LOBBY && state.players.length > 0 && (
+                  <button onClick={startWarmup} className="bg-fuchsia-600 px-24 py-10 rounded-full text-5xl font-black border-8 border-white shadow-3xl hover:bg-fuchsia-500 transition-all hover:scale-105">START THE RIOT</button>
                )}
-               {state.stage === GameStage.WARMUP && <button onClick={startTopicSelection} className="bg-blue-600 px-12 py-5 rounded-full font-black uppercase shadow-xl hover:scale-105 transition-all">SELECT TOPIC</button>}
-               {state.stage === GameStage.QUESTION && <button onClick={revealRound} className="bg-purple-600 px-12 py-5 rounded-full font-black uppercase shadow-xl hover:scale-105 transition-all">JUDGE ANSWERS</button>}
-               {state.stage === GameStage.VOTING_RESULTS && <button onClick={endRound} className="bg-pink-600 px-12 py-5 rounded-full font-black uppercase shadow-xl hover:scale-105 transition-all">SCOREBOARD</button>}
-               {state.stage === GameStage.REVEAL && <button onClick={startTopicSelection} className="bg-emerald-600 px-12 py-5 rounded-full font-black uppercase shadow-xl hover:scale-105 transition-all">NEXT ROUND</button>}
+               {state.stage === GameStage.WARMUP && <button onClick={startTopicSelection} className="bg-indigo-600 px-16 py-8 rounded-full font-black text-3xl shadow-xl hover:scale-110 border-4 border-white">BATTLE ON</button>}
+               {state.stage === GameStage.QUESTION && <button onClick={revealRound} className="bg-amber-600 px-16 py-8 rounded-full font-black text-3xl shadow-xl border-4 border-white">STOP THE MADNESS</button>}
+               {state.stage === GameStage.VOTING_RESULTS && <button onClick={endRound} className="bg-emerald-600 px-16 py-8 rounded-full font-black text-3xl shadow-xl border-4 border-white">NEXT CRIME</button>}
+               {state.stage === GameStage.REVEAL && <button onClick={startTopicSelection} className="bg-fuchsia-600 px-16 py-8 rounded-full font-black text-3xl shadow-xl border-4 border-white">GO AGAIN</button>}
             </div>
           )}
         </div>
       ) : (
-        <PhoneView state={state} playerId={playerId} onJoin={handleJoin} onSelectTopic={setTopic} onSubmitAnswer={(a) => sync({ players: state.players.map(p => p.id === playerId ? { ...p, lastAnswer: a } : p) })} onClaimChallenge={()=>{}} onSendRebuttal={()=>{}} onReset={resetPhoneSession} />
+        <PhoneView state={state} playerId={playerId} onJoin={handleJoin} onSelectTopic={setTopic} onSubmitAnswer={(a) => sync({ players: state.players.map(p => p.id === playerId ? { ...p, lastAnswer: a } : p) })} onClaimChallenge={()=>{}} onSendRebuttal={()=>{}} onReset={() => { localStorage.clear(); window.location.reload(); }} />
       )}
     </div>
   );
