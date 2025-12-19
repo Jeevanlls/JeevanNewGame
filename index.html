@@ -18,10 +18,20 @@
       .font-game {
         font-family: 'Fredoka', sans-serif;
       }
+      .animate-spin-slow {
+        animation: spin 8s linear infinite;
+      }
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
     </style>
     <script>
-      // Crucial: ensure process.env exists before any other script runs
-      window.process = { env: { API_KEY: "" } };
+      window.process = { 
+        env: { 
+          API_KEY: "" 
+        } 
+      };
     </script>
     <script type="importmap">
 {
@@ -30,21 +40,17 @@
     "react-dom": "https://esm.sh/react-dom@19.0.0",
     "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
     "@google/genai": "https://esm.sh/@google/genai@1.34.0",
+    "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
+    "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/"
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "firebase/": "https://esm.sh/firebase@^12.7.0/"
   }
 }
 </script>
   </head>
   <body>
-    <div id="root">
-      <div style="height: 100vh; display: flex; align-items: center; justify-content: center; background: #0f172a; color: white; font-family: sans-serif;">
-        <div style="text-align: center;">
-          <h1 style="font-size: 2rem; margin-bottom: 1rem;">AJ is Waking Up...</h1>
-          <p style="opacity: 0.6;">If this stays blank, check your browser console for errors.</p>
-        </div>
-      </div>
-    </div>
+    <div id="root"></div>
     <script type="module" src="index.tsx"></script>
   </body>
 </html>
