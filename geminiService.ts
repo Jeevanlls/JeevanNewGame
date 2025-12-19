@@ -9,161 +9,125 @@ const getAI = () => {
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
-const INSTANT_ROASTS = [
-  "Sema mokka! Even my grandma plays better.",
-  "Enna ya idhu? Logic-ae illama pesuringa!",
-  "Vera level... level-0 logically.",
-  "I've seen smarter toast. Move it!",
-  "Ayyayo! Massive fail. Paavam!",
-  "Is this a game or a funeral? Join already!"
-];
-
-const getSystemInstruction = (state: GameState) => {
-  const leader = [...state.players].sort((a, b) => b.score - a.score)[0];
-  return `You are AJ, a savage Tamil TV host. Fast, funny, bilingual (English/Tamil).
-  Rules: Short sentences (max 10 words). Use slang: Gubeer, Mokka, Sema, Vera Level, Paavam.
-  Context: ${state.players.length} players. Leader: ${leader ? leader.name : "None"}.
-  Be explosive. No boring filler.`;
+// CRITICAL: Must be called from a user gesture (button click)
+export const initAudio = async () => {
+  if (!sharedAudioCtx) {
+    sharedAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+  }
+  if (sharedAudioCtx.state === 'suspended') {
+    await sharedAudioCtx.resume();
+  }
+  // Play a tiny beep to confirm unlock
+  const osc = sharedAudioCtx.createOscillator();
+  const gain = sharedAudioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(sharedAudioCtx.destination);
+  gain.gain.value = 0.01;
+  osc.start();
+  osc.stop(sharedAudioCtx.currentTime + 0.01);
+  return sharedAudioCtx;
 };
 
-const withTimeout = <T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> => {
-  return Promise.race([
-    promise,
-    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))
-  ]);
+const getSystemInstruction = (state: GameState) => {
+  return `You are AJ, a savage Tamil TV host. 
+  Rules: Short sentences (max 10 words). Use slang: Gubeer, Mokka, Sema, Vera Level, Paavam.
+  Be explosive. You are high on energy.`;
 };
 
 export const generateIntro = async (state: GameState) => {
   const ai = getAI();
-  const res = await withTimeout(
-    ai.models.generateContent({
-      model: MODEL_SPEEDY,
-      contents: "AJ, give a short explosive bilingual intro. Tell them to join.",
-      config: { systemInstruction: getSystemInstruction(state) },
-    }),
-    4000,
-    { text: "Welcome to MIND MASH! Scan and join or you're a mokka piece!" } as any
-  );
+  const res = await ai.models.generateContent({
+    model: MODEL_SPEEDY,
+    contents: "AJ, give a very short explosive intro. Tell them to join.",
+    config: { systemInstruction: getSystemInstruction(state) },
+  });
   return res.text || "Welcome to the show!";
 };
 
 export const generateJoinComment = async (state: GameState, playerName: string, age: number) => {
   const ai = getAI();
-  const res = await withTimeout(
-    ai.models.generateContent({
-      model: MODEL_SPEEDY,
-      contents: `Player "${playerName}" (${age}) joined. 5-word roast.`,
-      config: { systemInstruction: getSystemInstruction(state) },
-    }),
-    3000,
-    { text: `${playerName} is here? Paavam, everyone lose now.` } as any
-  );
-  return res.text || "Next victim joined!";
+  const res = await ai.models.generateContent({
+    model: MODEL_SPEEDY,
+    contents: `Player "${playerName}" (${age}) just joined. Give a 5-word savage roast.`,
+    config: { systemInstruction: getSystemInstruction(state) },
+  });
+  return res.text || `${playerName} is here! Paavam.`;
 };
 
 export const generateLobbyIdleComment = async (state: GameState) => {
   const ai = getAI();
-  const prompt = state.players.length === 0 ? "No one joined. Scream." : "Roast the slow room.";
-  const res = await withTimeout(
-    ai.models.generateContent({
-      model: MODEL_SPEEDY,
-      contents: prompt,
-      config: { systemInstruction: getSystemInstruction(state) },
-    }),
-    3000,
-    { text: INSTANT_ROASTS[Math.floor(Math.random() * INSTANT_ROASTS.length)] } as any
-  );
-  return res.text || "Join fast!";
+  const res = await ai.models.generateContent({
+    model: MODEL_SPEEDY,
+    contents: "Roast the slow players for not joining yet.",
+    config: { systemInstruction: getSystemInstruction(state) },
+  });
+  return res.text || "Join fast or leave!";
 };
 
-export const generateWarmup = async (state: GameState): Promise<{ question: string }> => {
+export const generateWarmup = async (state: GameState) => {
   const ai = getAI();
-  const res = await withTimeout(
-    ai.models.generateContent({
-      model: MODEL_SPEEDY,
-      contents: "Spicy icebreaker question (Tanglish).",
-      config: { 
-        systemInstruction: getSystemInstruction(state),
-        responseMimeType: "application/json",
-        responseSchema: { type: Type.OBJECT, properties: { question: { type: Type.STRING } }, required: ['question'] }
-      },
-    }),
-    6000,
-    { text: JSON.stringify({ question: "Who is the biggest gossip here?" }) } as any
-  );
-  try { return JSON.parse(res.text || ''); } catch (e) { return { question: "Who is the laziest here?" }; }
+  const res = await ai.models.generateContent({
+    model: MODEL_SPEEDY,
+    contents: "One spicy family-friendly icebreaker question.",
+    config: { 
+      systemInstruction: getSystemInstruction(state),
+      responseMimeType: "application/json",
+      responseSchema: { type: Type.OBJECT, properties: { question: { type: Type.STRING } }, required: ['question'] }
+    },
+  });
+  return JSON.parse(res.text || '{"question": "Who is the laziest here?"}');
 };
 
-export const generateTopicOptions = async (state: GameState): Promise<string[]> => {
+export const generateTopicOptions = async (state: GameState) => {
   const ai = getAI();
-  const res = await withTimeout(
-    ai.models.generateContent({
-      model: MODEL_SPEEDY,
-      contents: "3 savage topics.",
-      config: { 
-        systemInstruction: getSystemInstruction(state),
-        responseMimeType: "application/json",
-        responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
-      },
-    }),
-    6000,
-    { text: JSON.stringify(["Cinema", "Food", "Secrets"]) } as any
-  );
-  try { return JSON.parse(res.text || ''); } catch (e) { return ["Cinema", "Food", "Gossip"]; }
+  const res = await ai.models.generateContent({
+    model: MODEL_SPEEDY,
+    contents: "Give 3 funny category names.",
+    config: { 
+      systemInstruction: getSystemInstruction(state),
+      responseMimeType: "application/json",
+      responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
+    },
+  });
+  return JSON.parse(res.text || '["Cinema", "Food", "Gossip"]');
 };
 
-export const generateQuestion = async (state: GameState): Promise<GameQuestion> => {
+export const generateQuestion = async (state: GameState) => {
   const ai = getAI();
-  const fallback: GameQuestion = {
-    textEn: "Which fruit is the King?", textTa: "பழங்களின் ராஜா?",
-    options: [{en: "Apple", ta: "ஆப்பிள்"}, {en: "Mango", ta: "மாம்பழம்"}, {en: "Banana", ta: "வாழை"}, {en: "Grape", ta: "திராட்சை"}],
-    correctIndex: 1, explanation: "Mango! Vera level."
-  };
-  const res = await withTimeout(
-    ai.models.generateContent({
-      model: MODEL_SPEEDY,
-      contents: `Topic: "${state.topic}". Create a funny question.`,
-      config: { 
-        systemInstruction: getSystemInstruction(state), 
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            textEn: { type: Type.STRING }, textTa: { type: Type.STRING },
-            options: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { en: { type: Type.STRING }, ta: { type: Type.STRING } } } },
-            correctIndex: { type: Type.INTEGER }, explanation: { type: Type.STRING }
-          },
-          required: ['textEn', 'textTa', 'options', 'correctIndex', 'explanation']
-        }
-      },
-    }),
-    10000,
-    { text: JSON.stringify(fallback) } as any
-  );
-  try { return JSON.parse(res.text || ''); } catch (e) { return fallback; }
+  const res = await ai.models.generateContent({
+    model: MODEL_SPEEDY,
+    contents: `Create a funny question about ${state.topic}.`,
+    config: { 
+      systemInstruction: getSystemInstruction(state),
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          textEn: { type: Type.STRING }, textTa: { type: Type.STRING },
+          options: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { en: { type: Type.STRING }, ta: { type: Type.STRING } } } },
+          correctIndex: { type: Type.INTEGER }, explanation: { type: Type.STRING }
+        },
+        required: ['textEn', 'textTa', 'options', 'correctIndex', 'explanation']
+      }
+    },
+  });
+  return JSON.parse(res.text || '{}');
 };
 
-export const generateRoast = async (state: GameState): Promise<string> => {
+export const generateRoast = async (state: GameState) => {
   const ai = getAI();
-  const res = await withTimeout(
-    ai.models.generateContent({
-      model: MODEL_SPEEDY,
-      contents: "Roast the scoreboard.",
-      config: { systemInstruction: getSystemInstruction(state) },
-    }),
-    5000,
-    { text: "Sema mokka scoring. Shameful!" } as any
-  );
-  return res.text || "Round over!";
+  const res = await ai.models.generateContent({
+    model: MODEL_SPEEDY,
+    contents: "Roast the scoreboard result.",
+    config: { systemInstruction: getSystemInstruction(state) },
+  });
+  return res.text || "Sema mokka performance!";
 };
 
 export const speakText = async (text: string) => {
+  if (!text) return;
   try {
-    if (!sharedAudioCtx) {
-      sharedAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-    }
-    if (sharedAudioCtx.state === 'suspended') await sharedAudioCtx.resume();
-    
+    const ctx = await initAudio();
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
@@ -175,13 +139,13 @@ export const speakText = async (text: string) => {
     });
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     if (base64Audio) {
-      const audioBuffer = await decodeAudioData(decode(base64Audio), sharedAudioCtx, 24000, 1);
-      const source = sharedAudioCtx.createBufferSource();
+      const audioBuffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
+      const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
-      source.connect(sharedAudioCtx.destination);
+      source.connect(ctx.destination);
       source.start();
     }
-  } catch (e) { console.error("AJ Voice Error:", e); }
+  } catch (e) { console.error("AJ Audio Fail:", e); }
 };
 
 function decode(base64: string): Uint8Array {
