@@ -2,30 +2,47 @@
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { GameState, GameQuestion, Language, GameMode } from "./types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Create instance inside functions or ensure it handles missing keys gracefully
+const getAI = () => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) throw new Error("API_KEY is missing. Please check Vercel Environment Variables.");
+  return new GoogleGenAI({ apiKey });
+};
 
 const getSystemPrompt = (state: GameState) => {
-  const playerInfo = state.players.map(p => `${p.name} (Age: ${p.age})`).join(", ");
-  const base = `You are AJ, a world-class AI game host. Current players: ${playerInfo}. 
-  You speak Tanglish (mix of Tamil and English). 
-  STRICT RULE: Never repeat topics or facts listed in the Game History.`;
+  const players = state.players.sort((a,b) => b.score - a.score);
+  const winner = players[0]?.name || "nobody";
+  const loser = players[players.length - 1]?.name || "nobody";
+  
+  const base = `You are AJ, a witty AI host for a family game. 
+  CURRENT RANKINGS: 
+  - Leader: ${winner} (Score: ${players[0]?.score || 0})
+  - Struggling: ${loser} (Score: ${players[players.length-1]?.score || 0})
+  Language: Tanglish (Tamil + English).
+  Game History: ${state.history.join(", ")}.`;
 
   if (state.mode === GameMode.CHAOS) {
-    return `${base} You are in CHAOS MODE. You are sarcastic, funny, and love to roast players. Be a bit 'naughty' with your jokes but stay family-friendly. Use terms like 'Mokka', 'Sema', 'Attakaasam'.`;
+    return `${base} 
+    PERSONALITY: Savage, funny, 'Confidently Wrong'. 
+    LEARNING GOAL: Roast ${loser} for their low score and suggest ${winner} might be cheating. 
+    Use terms like 'Mokka', 'Sema', 'Attakaasam'. Be high energy!`;
   } else {
-    return `${base} You are in GENIUS MODE. You are Professor AJ—wise, encouraging, and sophisticated. You share deep knowledge and treat the game like a prestigious academy.`;
+    return `${base} 
+    PERSONALITY: Professor AJ, academic, elite. 
+    LEARNING GOAL: Praise ${winner} for their intellectual dominance and offer ${loser} a 'scholarship' of easier questions (jokingly). 
+    Use sophisticated English mixed with formal Tamil.`;
   }
 };
 
 export const generateTopicOptions = async (state: GameState): Promise<string[]> => {
-  const historyFilter = state.history.length > 0 ? `DO NOT choose anything related to: ${state.history.join(", ")}.` : "";
+  const ai = getAI();
   const prompt = state.mode === GameMode.CHAOS 
-    ? `AJ, give me 4 funny, weird topics (3 words max) for a roast. ${historyFilter}`
-    : `Professor AJ, provide 4 intellectual, deep categories for a scholarly challenge. ${historyFilter}`;
+    ? "Generate 4 funny, weird topics. Return as JSON array of strings."
+    : "Generate 4 serious, intellectual categories. Return as JSON array of strings.";
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview', // Using Pro for better variety and memory
-    contents: prompt + " Return as JSON array of 4 strings.",
+    model: 'gemini-3-pro-preview',
+    contents: prompt,
     config: { 
       systemInstruction: getSystemPrompt(state),
       responseMimeType: "application/json",
@@ -35,23 +52,14 @@ export const generateTopicOptions = async (state: GameState): Promise<string[]> 
       }
     },
   });
-  try {
-    return JSON.parse(response.text || "[]");
-  } catch (e) {
-    return ["General Knowledge", "Movies", "Sports", "Culture"];
-  }
+  return JSON.parse(response.text || "[]");
 };
 
 export const generateQuestion = async (state: GameState): Promise<GameQuestion> => {
-  const historyFilter = state.history.length > 0 ? `STRICT: Do not repeat these previous themes/questions: ${state.history.join(", ")}.` : "";
-  const modeModifier = state.mode === GameMode.CHAOS 
-    ? "Create a tricky, funny question with sarcastic options. Make it hard so I can roast them later."
-    : "Create a fascinating, factual question. Provide a detailed 'explanation' in Tanglish for the 'Professor's Moment'.";
-
+  const ai = getAI();
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
-    contents: `Topic: ${state.topic}. ${modeModifier} ${historyFilter}
-    Return JSON: { "textEn": "...", "textTa": "...", "options": [{"en": "..", "ta": ".."}, ...], "correctIndex": 1-10, "explanation": "..." }`,
+    contents: `Topic: ${state.topic}. Generate a question with 5-10 options. Return JSON: { "textEn": "...", "textTa": "...", "options": [{"en": "..", "ta": ".."}], "correctIndex": 1-10, "explanation": "..." }`,
     config: {
       systemInstruction: getSystemPrompt(state),
       responseMimeType: "application/json",
@@ -61,34 +69,27 @@ export const generateQuestion = async (state: GameState): Promise<GameQuestion> 
 };
 
 export const generateRoast = async (state: GameState) => {
-  const picker = state.players.find(p => p.id === state.topicPickerId);
-  const results = state.players.map(p => `${p.name} guessed #${p.lastAnswer}`).join(", ");
-  const content = state.mode === GameMode.CHAOS
-    ? `The correct answer was #${state.currentQuestion?.correctIndex}. Here are the guesses: ${results}. Roast them savagely in Tanglish, especially ${picker?.name} who picked this topic!`
-    : `The correct answer was #${state.currentQuestion?.correctIndex}. ${results}. Celebrate the winners and explain why: ${state.currentQuestion?.explanation}`;
-
+  const ai = getAI();
+  const results = state.players.map(p => `${p.name} guessed ${p.lastAnswer}`).join(", ");
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
-    contents: content,
+    contents: `Correct answer was ${state.currentQuestion?.correctIndex}. Player guesses: ${results}. Give a 30-second Tanglish commentary.`,
     config: { systemInstruction: getSystemPrompt(state) },
   });
   return response.text || "";
 };
 
 export const generateIQBoard = async (state: GameState) => {
-  const playerStats = state.players.map(p => `${p.name} (Score: ${p.score}, Age: ${p.age})`).join(", ");
-  const prompt = state.mode === GameMode.CHAOS
-    ? `Look at these scores: ${playerStats}. Assign each player a hilarious 'Mokka' title and explain why they are failing at life in a funny way.`
-    : `Evaluate these scholars: ${playerStats}. Give them prestigious titles like 'Sovereign of Science' or 'Grandmaster of History' and praise their intellect.`;
-
+  const ai = getAI();
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
-    contents: prompt,
+    contents: "The game is over. Look at the scores and give a final, hilarious Tanglish summary of everyone's performance.",
     config: { systemInstruction: getSystemPrompt(state) },
   });
   return response.text || "";
 };
 
+// Internal decoding helpers
 function decode(base64: string) {
   const binaryString = atob(base64);
   const len = binaryString.length;
@@ -110,6 +111,7 @@ async function decodeAudioData(data: Uint8Array, ctx: AudioContext, sampleRate: 
 
 export const speakText = async (text: string) => {
   try {
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
       contents: [{ parts: [{ text }] }],
@@ -127,5 +129,5 @@ export const speakText = async (text: string) => {
       source.connect(outputAudioContext.destination);
       source.start();
     }
-  } catch (e) { console.error(e); }
+  } catch (e) { console.error("TTS Error:", e); }
 };
