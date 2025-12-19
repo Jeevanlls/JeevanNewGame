@@ -6,21 +6,20 @@ export enum Language {
 }
 
 export enum GameMode {
-  CHAOS = 'CHAOS', // Sarcastic, Roasting, "Confidently Wrong"
-  GENIUS = 'GENIUS' // Factual, Competitive, "Confidently Right"
+  CONFIDENTLY_WRONG = 'CONFIDENTLY_WRONG',
+  ACTUALLY_GENIUS = 'ACTUALLY_GENIUS'
 }
 
 export enum GameStage {
   LOBBY = 'LOBBY',
-  LOADING = 'LOADING', // New state for AI thinking transitions
-  EXPLANATION = 'EXPLANATION',
+  LOADING = 'LOADING',
+  WARMUP = 'WARMUP',
+  SELECTOR_REVEAL = 'SELECTOR_REVEAL',
   TOPIC_SELECTION = 'TOPIC_SELECTION',
   QUESTION = 'QUESTION',
   VOTING_RESULTS = 'VOTING_RESULTS',
   REVEAL = 'REVEAL',
-  ARGUMENT = 'ARGUMENT',
-  DASHBOARD = 'DASHBOARD',
-  FINAL = 'FINAL'
+  DASHBOARD = 'DASHBOARD'
 }
 
 export interface Player {
@@ -29,8 +28,7 @@ export interface Player {
   age: number;
   score: number;
   lastAnswer?: string;
-  isTopicSelector?: boolean;
-  traits: string[];
+  traits: string[]; 
   preferredLanguage: Language;
 }
 
@@ -44,8 +42,7 @@ export interface GameQuestion {
   textTa: string;
   options: GameOption[];
   correctIndex: number;
-  explanation: string; 
-  type: string;
+  explanation: string;
 }
 
 export interface GameState {
@@ -54,12 +51,13 @@ export interface GameState {
   mode: GameMode;
   players: Player[];
   language: Language; 
+  occasion?: string;
   topic?: string;
   topicOptions: string[];
   round: number;
-  history: string[]; // Stores previous questions and topics to prevent repetition
-  challengerId?: string;
-  isWarmup: boolean;
+  history: string[];
   currentQuestion?: GameQuestion;
   topicPickerId?: string;
+  hostRoast?: string;
+  warmupQuestion?: string;
 }

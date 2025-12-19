@@ -1,113 +1,152 @@
-
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { GameState, GameQuestion, Language, GameMode } from "./types";
 
-// Create instance inside functions or ensure it handles missing keys gracefully
+// Always use a new instance and access process.env.API_KEY directly as per guidelines.
 const getAI = () => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) throw new Error("API_KEY is missing. Please check Vercel Environment Variables.");
-  return new GoogleGenAI({ apiKey });
+  return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
-const getSystemPrompt = (state: GameState) => {
-  const players = state.players.sort((a,b) => b.score - a.score);
-  const winner = players[0]?.name || "nobody";
-  const loser = players[players.length - 1]?.name || "nobody";
+const getSystemInstruction = (state: GameState) => {
+  const isChaos = state.mode === GameMode.CONFIDENTLY_WRONG;
   
-  const base = `You are AJ, a witty AI host for a family game. 
-  CURRENT RANKINGS: 
-  - Leader: ${winner} (Score: ${players[0]?.score || 0})
-  - Struggling: ${loser} (Score: ${players[players.length-1]?.score || 0})
-  Language: Tanglish (Tamil + English).
-  Game History: ${state.history.join(", ")}.`;
+  return `You are AJ, the host of "MIND MASH: The AJ Show". You speak Tanglish (English + Tamil slang like Mokka, Sema, Gubeer).
 
-  if (state.mode === GameMode.CHAOS) {
-    return `${base} 
-    PERSONALITY: Savage, funny, 'Confidently Wrong'. 
-    LEARNING GOAL: Roast ${loser} for their low score and suggest ${winner} might be cheating. 
-    Use terms like 'Mokka', 'Sema', 'Attakaasam'. Be high energy!`;
-  } else {
-    return `${base} 
-    PERSONALITY: Professor AJ, academic, elite. 
-    LEARNING GOAL: Praise ${winner} for their intellectual dominance and offer ${loser} a 'scholarship' of easier questions (jokingly). 
-    Use sophisticated English mixed with formal Tamil.`;
+  CURRENT MODE: ${state.mode}
+  - If CONFIDENTLY_WRONG: Your goal is laughter. Ask absurd, trick, or funny situational questions. Roast players who give "boring correct" answers.
+  - If ACTUALLY_GENIUS: Your goal is General Knowledge and Learning. Ask high-quality, challenging GK questions. Be a bit more respectful of intelligence but still witty.
+
+  ENVIRONMENT:
+  - Occasion: ${state.occasion || 'A random gathering of humans'}
+  - Language: English/Tamil mix.
+
+  PERSONALITY:
+  - You are self-learning. You notice who is winning and who is "Mokka."
+  - You love arguing. If someone rebuts your judgment, be prepared to defend your logic with more wit.`;
+};
+
+// Helper to decode base64 to Uint8Array as per guidelines
+function decode(base64: string): Uint8Array {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
   }
+  return bytes;
+}
+
+// Helper to decode raw PCM data to AudioBuffer as per guidelines
+async function decodeAudioData(
+  data: Uint8Array,
+  ctx: AudioContext,
+  sampleRate: number,
+  numChannels: number,
+): Promise<AudioBuffer> {
+  const dataInt16 = new Int16Array(data.buffer);
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) {
+      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+    }
+  }
+  return buffer;
+}
+
+export const generateWarmup = async (state: GameState) => {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: "Ask the group 1 environmental question to set the mood (e.g., 'Who is the most likely to cheat in this game?' or 'Who here thinks they are the smartest?').",
+    config: { 
+      systemInstruction: getSystemInstruction(state), 
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          question: { type: Type.STRING },
+          hint: { type: Type.STRING }
+        },
+        required: ['question', 'hint']
+      }
+    },
+  });
+  return JSON.parse(response.text?.trim() || '{}');
 };
 
 export const generateTopicOptions = async (state: GameState): Promise<string[]> => {
   const ai = getAI();
-  const prompt = state.mode === GameMode.CHAOS 
-    ? "Generate 4 funny, weird topics. Return as JSON array of strings."
-    : "Generate 4 serious, intellectual categories. Return as JSON array of strings.";
+  const isChaos = state.mode === GameMode.CONFIDENTLY_WRONG;
+  const prompt = isChaos 
+    ? "Give 4 hilarious, weird, or embarrassing category names for a funny family game."
+    : "Give 4 serious categories for a General Knowledge learning game (e.g., Astrophysics, Tamil History, Global Economics).";
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: prompt,
+    config: { 
+      systemInstruction: getSystemInstruction(state),
+      responseMimeType: "application/json",
+      responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
+    },
+  });
+  return JSON.parse(response.text?.trim() || "[]");
+};
+
+export const generateQuestion = async (state: GameState): Promise<GameQuestion> => {
+  const ai = getAI();
+  const isChaos = state.mode === GameMode.CONFIDENTLY_WRONG;
+  const prompt = isChaos
+    ? `Create a funny, trick, or situational question for "${state.topic}". The 'correct' answer should be the funniest one.`
+    : `Create a high-quality General Knowledge question for "${state.topic}". It should be educational.`;
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: prompt,
     config: { 
-      systemInstruction: getSystemPrompt(state),
+      systemInstruction: getSystemInstruction(state), 
       responseMimeType: "application/json",
       responseSchema: {
-        type: Type.ARRAY,
-        items: { type: Type.STRING }
+        type: Type.OBJECT,
+        properties: {
+          textEn: { type: Type.STRING },
+          textTa: { type: Type.STRING },
+          options: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                en: { type: Type.STRING },
+                ta: { type: Type.STRING }
+              },
+              required: ['en', 'ta']
+            }
+          },
+          correctIndex: { type: Type.INTEGER },
+          explanation: { type: Type.STRING }
+        },
+        required: ['textEn', 'textTa', 'options', 'correctIndex', 'explanation']
       }
     },
   });
-  return JSON.parse(response.text || "[]");
+  return JSON.parse(response.text?.trim() || '{}');
 };
 
-export const generateQuestion = async (state: GameState): Promise<GameQuestion> => {
+export const generateRoast = async (state: GameState, isRebuttal: boolean = false): Promise<string> => {
   const ai = getAI();
+  const prompt = isRebuttal 
+    ? "A player is arguing with your logic! Give a savage Tanglish rebuttal. Don't back down easily."
+    : "The round is over. Roast the people who got it wrong and praise the 'Genius' who got it right.";
+
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
-    contents: `Topic: ${state.topic}. Generate a question with 5-10 options. Return JSON: { "textEn": "...", "textTa": "...", "options": [{"en": "..", "ta": ".."}], "correctIndex": 1-10, "explanation": "..." }`,
-    config: {
-      systemInstruction: getSystemPrompt(state),
-      responseMimeType: "application/json",
-    },
+    contents: prompt,
+    config: { systemInstruction: getSystemInstruction(state) },
   });
-  return JSON.parse(response.text || '{}');
+  return response.text || "I'm literally speechless at this performance.";
 };
-
-export const generateRoast = async (state: GameState) => {
-  const ai = getAI();
-  const results = state.players.map(p => `${p.name} guessed ${p.lastAnswer}`).join(", ");
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
-    contents: `Correct answer was ${state.currentQuestion?.correctIndex}. Player guesses: ${results}. Give a 30-second Tanglish commentary.`,
-    config: { systemInstruction: getSystemPrompt(state) },
-  });
-  return response.text || "";
-};
-
-export const generateIQBoard = async (state: GameState) => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
-    contents: "The game is over. Look at the scores and give a final, hilarious Tanglish summary of everyone's performance.",
-    config: { systemInstruction: getSystemPrompt(state) },
-  });
-  return response.text || "";
-};
-
-// Internal decoding helpers
-function decode(base64: string) {
-  const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) { bytes[i] = binaryString.charCodeAt(i); }
-  return bytes;
-}
-
-async function decodeAudioData(data: Uint8Array, ctx: AudioContext, sampleRate: number, numChannels: number): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) { channelData[i] = dataInt16[i * numChannels + channel] / 32768.0; }
-  }
-  return buffer;
-}
 
 export const speakText = async (text: string) => {
   try {
@@ -122,12 +161,12 @@ export const speakText = async (text: string) => {
     });
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     if (base64Audio) {
-      const outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      const audioBuffer = await decodeAudioData(decode(base64Audio), outputAudioContext, 24000, 1);
-      const source = outputAudioContext.createBufferSource();
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      const audioBuffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
+      const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
-      source.connect(outputAudioContext.destination);
+      source.connect(ctx.destination);
       source.start();
     }
-  } catch (e) { console.error("TTS Error:", e); }
+  } catch (e) { console.error("TTS Error", e); }
 };
