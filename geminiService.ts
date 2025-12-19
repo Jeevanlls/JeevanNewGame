@@ -1,30 +1,49 @@
+
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { GameState, GameQuestion, Language, GameMode } from "./types";
 
-// Always use a new instance and access process.env.API_KEY directly as per guidelines.
+const MODEL_SPEEDY = 'gemini-3-flash-preview';
+
 const getAI = () => {
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
+/**
+ * AJ's DYNAMIC BRAIN
+ * This function builds a profile of the room so AJ can 'learn' about the players.
+ */
 const getSystemInstruction = (state: GameState) => {
   const isChaos = state.mode === GameMode.CONFIDENTLY_WRONG;
   
-  return `You are AJ, the host of "MIND MASH: The AJ Show". You speak Tanglish (English + Tamil slang like Mokka, Sema, Gubeer).
+  // Analyze current standings for the 'Self-Learning' effect
+  const sortedPlayers = [...state.players].sort((a, b) => b.score - a.score);
+  const leader = sortedPlayers[0];
+  const tail = sortedPlayers[sortedPlayers.length - 1];
+  
+  const roomVibe = state.players.length > 3 ? "Party Mode" : "Intimate Gathering";
+  const roundContext = state.round > 1 ? `It's Round ${state.round}. People are ${state.round > 3 ? 'getting tired' : 'just warming up'}.` : "Fresh start.";
 
-  CURRENT MODE: ${state.mode}
-  - If CONFIDENTLY_WRONG: Your goal is laughter. Ask absurd, trick, or funny situational questions. Roast players who give "boring correct" answers.
-  - If ACTUALLY_GENIUS: Your goal is General Knowledge and Learning. Ask high-quality, challenging GK questions. Be a bit more respectful of intelligence but still witty.
+  return `You are AJ, the high-energy, savage AI host of "MIND MASH: The AJ Show". 
+  You are NOT a helpful assistant. You are a TV Host with an attitude. 
+  You speak Tanglish (English + Tamil slang like Mokka, Sema, Gubeer, Otha, Nanba).
 
-  ENVIRONMENT:
-  - Occasion: ${state.occasion || 'A random gathering of humans'}
-  - Language: English/Tamil mix.
+  SELF-LEARNING ROOM INTEL:
+  - Current Vibe: ${roomVibe}. ${roundContext}
+  - Leaderboard: ${sortedPlayers.map(p => `${p.name} (${p.score})`).join(", ")}
+  - The "Sema" Player (Winning): ${leader ? leader.name : "None"}. (Treat them with suspicious respect).
+  - The "Mokka" Player (Losing): ${tail ? tail.name : "None"}. (Be mercilessly funny about their low score).
+  - History of Topics: ${state.history.join(" -> ") || "Nothing yet"}.
+  - Mode: ${state.mode}.
 
-  PERSONALITY:
-  - You are self-learning. You notice who is winning and who is "Mokka."
-  - You love arguing. If someone rebuts your judgment, be prepared to defend your logic with more wit.`;
+  HOSTING RULES:
+  1. ALWAYS stay in character. Use emojis like 🎤, 🔥, 🤡, 🧠.
+  2. If players take too long, tell them your "cloud processor is getting bored".
+  3. In CONFIDENTLY_WRONG mode: Act like a flat-earther with a PhD. Give absurd "facts".
+  4. In ACTUALLY_GENIUS mode: Be a pretentious intellectual.
+  5. KEEP IT PUNCHY. Max 2 short sentences. No "Hello everyone". Start with the roast.
+  6. Use Tamil culture references (Cinema, Food, Slang) where appropriate.`;
 };
 
-// Helper to decode base64 to Uint8Array as per guidelines
 function decode(base64: string): Uint8Array {
   const binaryString = atob(base64);
   const len = binaryString.length;
@@ -35,7 +54,6 @@ function decode(base64: string): Uint8Array {
   return bytes;
 }
 
-// Helper to decode raw PCM data to AudioBuffer as per guidelines
 async function decodeAudioData(
   data: Uint8Array,
   ctx: AudioContext,
@@ -58,11 +76,12 @@ async function decodeAudioData(
 export const generateWarmup = async (state: GameState) => {
   const ai = getAI();
   const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: "Ask the group 1 environmental question to set the mood (e.g., 'Who is the most likely to cheat in this game?' or 'Who here thinks they are the smartest?').",
+    model: MODEL_SPEEDY,
+    contents: "AJ, welcome the crowd and throw out a spicy 'Who in this room' question to start the drama.",
     config: { 
       systemInstruction: getSystemInstruction(state), 
       responseMimeType: "application/json",
+      thinkingConfig: { thinkingBudget: 0 },
       responseSchema: {
         type: Type.OBJECT,
         properties: {
@@ -78,17 +97,13 @@ export const generateWarmup = async (state: GameState) => {
 
 export const generateTopicOptions = async (state: GameState): Promise<string[]> => {
   const ai = getAI();
-  const isChaos = state.mode === GameMode.CONFIDENTLY_WRONG;
-  const prompt = isChaos 
-    ? "Give 4 hilarious, weird, or embarrassing category names for a funny family game."
-    : "Give 4 serious categories for a General Knowledge learning game (e.g., Astrophysics, Tamil History, Global Economics).";
-
   const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: prompt,
+    model: MODEL_SPEEDY,
+    contents: "Give me 4 category titles that are relevant to this specific group's intelligence level.",
     config: { 
       systemInstruction: getSystemInstruction(state),
       responseMimeType: "application/json",
+      thinkingConfig: { thinkingBudget: 0 },
       responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
     },
   });
@@ -97,17 +112,13 @@ export const generateTopicOptions = async (state: GameState): Promise<string[]> 
 
 export const generateQuestion = async (state: GameState): Promise<GameQuestion> => {
   const ai = getAI();
-  const isChaos = state.mode === GameMode.CONFIDENTLY_WRONG;
-  const prompt = isChaos
-    ? `Create a funny, trick, or situational question for "${state.topic}". The 'correct' answer should be the funniest one.`
-    : `Create a high-quality General Knowledge question for "${state.topic}". It should be educational.`;
-
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
-    contents: prompt,
+    model: MODEL_SPEEDY,
+    contents: `Topic: "${state.topic}". Round: ${state.round}. Make it ${state.mode}.`,
     config: { 
       systemInstruction: getSystemInstruction(state), 
       responseMimeType: "application/json",
+      thinkingConfig: { thinkingBudget: 0 },
       responseSchema: {
         type: Type.OBJECT,
         properties: {
@@ -117,10 +128,7 @@ export const generateQuestion = async (state: GameState): Promise<GameQuestion> 
             type: Type.ARRAY,
             items: {
               type: Type.OBJECT,
-              properties: {
-                en: { type: Type.STRING },
-                ta: { type: Type.STRING }
-              },
+              properties: { en: { type: Type.STRING }, ta: { type: Type.STRING } },
               required: ['en', 'ta']
             }
           },
@@ -137,15 +145,18 @@ export const generateQuestion = async (state: GameState): Promise<GameQuestion> 
 export const generateRoast = async (state: GameState, isRebuttal: boolean = false): Promise<string> => {
   const ai = getAI();
   const prompt = isRebuttal 
-    ? "A player is arguing with your logic! Give a savage Tanglish rebuttal. Don't back down easily."
-    : "The round is over. Roast the people who got it wrong and praise the 'Genius' who got it right.";
+    ? "Someone is trying to argue with me. Destroy their argument with high-confidence nonsense."
+    : "The round is over. Review the scores and roast the losers while praising the 'Sus' winner.";
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
+    model: MODEL_SPEEDY,
     contents: prompt,
-    config: { systemInstruction: getSystemInstruction(state) },
+    config: { 
+      systemInstruction: getSystemInstruction(state),
+      thinkingConfig: { thinkingBudget: 0 }
+    },
   });
-  return response.text || "I'm literally speechless at this performance.";
+  return response.text || "I'm literally speechless. Next round, please.";
 };
 
 export const speakText = async (text: string) => {
@@ -168,5 +179,5 @@ export const speakText = async (text: string) => {
       source.connect(ctx.destination);
       source.start();
     }
-  } catch (e) { console.error("TTS Error", e); }
+  } catch (e) { console.error("TTS Fail:", e); }
 };
