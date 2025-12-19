@@ -9,13 +9,12 @@ let musicGainNode: GainNode | null = null;
 let currentBPM = 110;
 
 const LOCAL_AJ = {
-  slang: ["Gubeer!", "Mokka!", "Vera Level!", "Paavam!", "Sema!", "Gaali!", "Adade!", "Enna ya idhu?", "Oyy!"],
   tutorial: [
-    "AJ: Vanga vanga! Welcome to Mind Mash. I am AJ, and this is VJ. VJ: Hello victims! Ready to lose your dignity?",
-    "AJ: Step 1: Scan that QR code. If you're too slow, VJ will roast you. VJ: I've already started. Look at their faces.",
-    "AJ: Step 2: One player picks a topic. VJ: Choose something logic-less, like your life choices.",
-    "AJ: Step 3: Answer fast. Correct gets points. Mokka logic gets burned. VJ: And I have the matches ready.",
-    "AJ: Simple right? VJ: For us, yes. For them? We'll see. Let's start!"
+    "AJ: Vanga vanga! Welcome to Mind Mash. I am AJ, and this is VJ. VJ: Ready-ah victims? Let's start the chaos.",
+    "AJ: Scan that QR code seekram! VJ: Time is money, logic is zero here.",
+    "AJ: One person will pick a topic. VJ: Choice ungaladhu, roast engaladhu.",
+    "AJ: Answer fast-ah panni score ethunga. VJ: Illana Gubeer-u dhan ungaluku answer.",
+    "AJ: Ready for the mash? VJ: Logic-ku oru periya kumbudu. Let's go!"
   ]
 };
 
@@ -33,7 +32,7 @@ export const updateBGM = (stage: GameStage) => {
     musicGainNode.connect(sharedAudioCtx.destination);
   }
   
-  const bpm = (stage === GameStage.QUESTION || stage === GameStage.SELECTOR_REVEAL) ? 140 : 108;
+  const bpm = (stage === GameStage.QUESTION || stage === GameStage.SELECTOR_REVEAL) ? 138 : 108;
   if (bpm === currentBPM && musicInterval) return;
   
   currentBPM = bpm;
@@ -45,6 +44,7 @@ export const updateBGM = (stage: GameStage) => {
     if (!sharedAudioCtx || !musicGainNode) return;
     const time = sharedAudioCtx.currentTime;
     
+    // Kick 
     if (beat % 4 === 0) {
       const osc = sharedAudioCtx.createOscillator();
       const g = sharedAudioCtx.createGain();
@@ -55,6 +55,7 @@ export const updateBGM = (stage: GameStage) => {
       osc.connect(g); g.connect(musicGainNode!);
       osc.start(time); osc.stop(time + 0.1);
     }
+    // Snare
     if (beat % 4 === 2) {
       const noise = sharedAudioCtx.createBufferSource();
       const buf = sharedAudioCtx.createBuffer(1, 4096, sharedAudioCtx.sampleRate);
@@ -79,18 +80,19 @@ export const initAudio = async () => {
   return sharedAudioCtx;
 };
 
-const getSystemInstruction = (mode: GameMode = GameMode.CONFIDENTLY_WRONG) => {
+const getSystemInstruction = (mode: GameMode) => {
   const modeContext = mode === GameMode.ACTUALLY_GENIUS 
-    ? "This is 'Actually Genius' mode. Find the smartest player (the Clever Bot). VJ is obsessed with high IQ. AJ roasts the low scorers."
-    : "This is 'Confidently Wrong' mode. Focus on trickery, funny answers, and mocka logic. AJ loves the chaos. VJ judges everyone's confidence.";
+    ? "ACTUALLY GENIUS mode: Focus on finding the 'Clever Bot' (high IQ player). VJ is sharp and impressed by speed. AJ roasts slow players."
+    : "CONFIDENTLY WRONG mode: 1980s party vibe. Focus on funny, mokka, and logical-less answers. AJ loves the chaos. VJ judges everyone's 'confidence'.";
 
   return `You are two savage hosts, AJ (Male) and VJ (Female).
+  MANDATORY: Speak in 100% Tanglish (English + Tamil mixed).
+  Example: "AJ: Dei logic enga da? VJ: Answer enna logic-less-ah iruku!"
   ${modeContext}
   Rules:
-  1. Always respond as a dialogue: "AJ: [text] VJ: [text]".
-  2. Be extremely brief (max 10 words total).
-  3. Use heavy Tanglish/Tamil slang (Gubeer, Mokka, Vera Level, Gaali).
-  4. VJ is sharper and cynical. AJ is energetic and loud.`;
+  1. Always respond as a dialogue: "AJ: [Tanglish text] VJ: [Tanglish text]".
+  2. Max 10-12 words total. Be fast and energetic.
+  3. Use slang: Gubeer, Mokka, Vera Level, Gaali, Oyy, Adade.`;
 };
 
 const speakNativeFallback = (text: string) => {
@@ -106,7 +108,7 @@ const speakNativeFallback = (text: string) => {
   window.speechSynthesis.speak(utterance);
 };
 
-export const speakText = async (text: string, mode?: GameMode) => {
+export const speakText = async (text: string, mode: GameMode = GameMode.CONFIDENTLY_WRONG) => {
   if (!text) return;
   try {
     const ctx = await initAudio();
@@ -115,7 +117,7 @@ export const speakText = async (text: string, mode?: GameMode) => {
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: `Generate multi-speaker TTS for this dialogue: ${text}` }] }],
+      contents: [{ parts: [{ text: `Generate high-energy Tanglish multi-speaker TTS for: ${text}` }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
@@ -143,44 +145,32 @@ export const speakText = async (text: string, mode?: GameMode) => {
   }
 };
 
-// Added missing export generateLobbyIdleComment used in App.tsx
 export const generateLobbyIdleComment = async (state: GameState) => {
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: "The players are taking too long in the lobby. AJ and VJ, give a 1-sentence funny roast to hurry them up.",
+      contents: "The lobby is slow. Give a Tanglish roast to hurry them up.",
       config: { systemInstruction: getSystemInstruction(state.mode) },
     });
-    return res.text || "AJ: Enna ya? Start pannungappa! VJ: Time is money, and you have neither.";
-  } catch (e) {
-    return "AJ: Waiting for you... VJ: Boring.";
-  }
+    return res.text || "AJ: Enna ya? Start pannungappa! VJ: Time waste logic-u.";
+  } catch (e) { return "AJ: Join fast! VJ: Waiting boring-ah iruku."; }
 };
 
-// Added missing export generateWarmup used in App.tsx
 export const generateWarmup = async (state: GameState) => {
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: "Generate one funny, logic-less warmup question for the players.",
+      contents: "Funny Tanglish warmup question.",
       config: { 
-        systemInstruction: getSystemInstruction(state.mode) + " Return JSON with key 'question'.",
+        systemInstruction: getSystemInstruction(state.mode) + " Return JSON with 'question' field.",
         responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            question: { type: Type.STRING }
-          },
-          required: ['question']
-        }
+        responseSchema: { type: Type.OBJECT, properties: { question: { type: Type.STRING } }, required: ['question'] }
       },
     });
-    return JSON.parse(res.text || '{"question": "Are you ready for the mash?"}');
-  } catch (e) {
-    return { question: "AJ: Ready for the mash? VJ: I doubt it." };
-  }
+    return JSON.parse(res.text || '{"question": "AJ: Ready for the mash? VJ: Let\'s see the logic."}');
+  } catch (e) { return { question: "AJ: Who is the biggest mokka here? VJ: All of them." }; }
 };
 
 export const generateIntro = async (state: GameState) => {
@@ -188,11 +178,11 @@ export const generateIntro = async (state: GameState) => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: "AJ and VJ, give a 1-sentence explosive intro.",
+      contents: "AJ and VJ, Tanglish intro for the show.",
       config: { systemInstruction: getSystemInstruction(state.mode) },
     });
-    return res.text || "AJ: We are LIVE! VJ: Unfortunately.";
-  } catch (e) { return "AJ: We are LIVE! VJ: Let the roasts begin."; }
+    return res.text || "AJ: We are LIVE! VJ: Ready-ah logic-less people?";
+  } catch (e) { return "AJ: Start the show! VJ: Logic is officially dead."; }
 };
 
 export const generateJoinComment = async (state: GameState, playerName: string) => {
@@ -200,11 +190,11 @@ export const generateJoinComment = async (state: GameState, playerName: string) 
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: `Player "${playerName}" joined. Quick roast.`,
+      contents: `Player "${playerName}" joined. Tanglish roast.`,
       config: { systemInstruction: getSystemInstruction(state.mode) },
     });
-    return res.text || `AJ: Welcome ${playerName}! VJ: Another mokka piece.`;
-  } catch (e) { return `AJ: ${playerName} is here! VJ: RIP quality.`; }
+    return res.text || `AJ: Welcome ${playerName}! VJ: Another mokka entry.`;
+  } catch (e) { return `AJ: ${playerName} in the house! VJ: RIP brain cells.`; }
 };
 
 export const generateQuestion = async (state: GameState) => {
@@ -212,7 +202,7 @@ export const generateQuestion = async (state: GameState) => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const prompt = state.mode === GameMode.ACTUALLY_GENIUS 
       ? `Generate a real knowledge question about ${state.topic}.`
-      : `Generate a tricky or funny logic question about ${state.topic}.`;
+      : `Generate a logical-less or tricky question about ${state.topic}.`;
 
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
@@ -236,7 +226,7 @@ export const generateQuestion = async (state: GameState) => {
     return {
       textEn: "Which is King?", textTa: "எது ராஜா?",
       options: [{en: "A", ta: "அ"}, {en: "B", ta: "ஆ"}, {en: "C", ta: "இ"}, {en: "D", ta: "ஈ"}],
-      correctIndex: 0, explanation: "Logic missing!"
+      correctIndex: 0, explanation: "Logic gaali!"
     };
   }
 };
