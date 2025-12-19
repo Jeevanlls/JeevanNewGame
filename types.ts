@@ -23,6 +23,12 @@ export enum GameStage {
   DASHBOARD = 'DASHBOARD'
 }
 
+export interface Reaction {
+  id: string;
+  emoji: string;
+  x: number;
+}
+
 export interface Player {
   id: string;
   name: string;
@@ -61,4 +67,6 @@ export interface GameState {
   topicPickerId?: string;
   hostRoast?: string;
   warmupQuestion?: string;
+  reactions?: Reaction[];
+  lastRoastTime?: number;
 }
