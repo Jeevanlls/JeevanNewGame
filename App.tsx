@@ -42,15 +42,17 @@ const App: React.FC = () => {
     return unsub;
   }, [roomCode]);
 
-  // AJ Idle Loop
+  // AJ Idle Loop - Reduced frequency to save quota (45s)
   useEffect(() => {
     if (viewMode !== 'TV' || !audioEnabled || state.stage !== GameStage.LOBBY) return;
     const interval = setInterval(async () => {
-      if (Date.now() - lastActivityRef.current > 25000) {
-        const comment = await gemini.generateLobbyIdleComment(state);
-        setHostMessage(comment);
-        gemini.speakText(comment);
-        lastActivityRef.current = Date.now();
+      if (Date.now() - lastActivityRef.current > 45000) {
+        try {
+          const comment = await gemini.generateLobbyIdleComment(state);
+          setHostMessage(comment);
+          gemini.speakText(comment);
+          lastActivityRef.current = Date.now();
+        } catch (e) { /* Silent fallback handled in service */ }
       }
     }, 5000);
     return () => clearInterval(interval);
@@ -89,15 +91,14 @@ const App: React.FC = () => {
     setHostMessage("AJ IS STRETCHING...");
     
     try {
-      await gemini.initAudio(); // Force unlock
+      await gemini.initAudio();
       setAudioEnabled(true);
-      
       const intro = await gemini.generateIntro(state);
       setHostMessage(intro);
       await gemini.speakText(intro);
       lastActivityRef.current = Date.now();
     } catch (e) {
-      setHostMessage("AJ IS AWAKE! Ready to play.");
+      setHostMessage("Ready to Mash!");
       setAudioEnabled(true);
     } finally {
       setIsWakingAJ(false);
@@ -114,7 +115,7 @@ const App: React.FC = () => {
       });
       setPlayerId(id);
       localStorage.setItem('AJ_PLAYER_ID', id);
-    } catch (e) { alert("Room full or connection error!"); }
+    } catch (e) { alert("Room busy!"); }
   };
 
   const sync = (updates: Partial<GameState>) => updateDoc(doc(db, "games", roomCode), updates);
@@ -126,7 +127,7 @@ const App: React.FC = () => {
           <TVView state={state} hostMessage={hostMessage} iqData="" />
           
           {!audioEnabled ? (
-            <div className="fixed inset-0 bg-black/90 z-[1000] flex flex-col items-center justify-center p-20 text-center backdrop-blur-md">
+            <div className="fixed inset-0 bg-black/95 z-[1000] flex flex-col items-center justify-center p-20 text-center backdrop-blur-md">
                <div className="w-48 h-48 bg-fuchsia-600 rounded-full flex items-center justify-center text-8xl mb-12 shadow-[0_0_120px_rgba(192,38,211,0.8)] border-4 border-white animate-pulse">🎤</div>
                <h1 className="text-[10rem] font-black italic uppercase leading-none mb-12 tracking-tighter">MIND MASH</h1>
                <button 
@@ -140,8 +141,9 @@ const App: React.FC = () => {
             <div className="fixed bottom-24 left-1/2 -translate-x-1/2 flex gap-6 z-[500]">
                {state.stage === GameStage.LOBBY && state.players.length > 0 && (
                   <button onClick={async () => {
-                    setHostMessage("Hold on, let me look at you first...");
-                    await gemini.speakText("Hold on, let me look at you first...");
+                    const msg = "Wait wait, checking your vibes...";
+                    setHostMessage(msg);
+                    await gemini.speakText(msg);
                     sync({ stage: GameStage.LOADING });
                     const w = await gemini.generateWarmup(state);
                     sync({ stage: GameStage.WARMUP, warmupQuestion: w.question });
@@ -163,6 +165,7 @@ const App: React.FC = () => {
           sync({ topic: t, stage: GameStage.LOADING });
           const q = await gemini.generateQuestion({ ...state, topic: t });
           sync({ currentQuestion: q, stage: GameStage.QUESTION, players: state.players.map(p => ({ ...p, lastAnswer: '' })) });
+          gemini.speakText(q.textEn);
         }} onSubmitAnswer={(a) => sync({ players: state.players.map(p => p.id === playerId ? { ...p, lastAnswer: a } : p) })} onClaimChallenge={()=>{}} onSendRebuttal={()=>{}} onReset={() => { localStorage.clear(); window.location.reload(); }} />
       )}
     </div>
