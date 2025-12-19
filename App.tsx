@@ -19,7 +19,7 @@ const App: React.FC = () => {
   });
 
   const [playerId, setPlayerId] = useState<string>(() => localStorage.getItem('AJ_PLAYER_ID') || '');
-  const [hostMessage, setHostMessage] = useState<string>('AJ & VJ LOBBY-LA WAITING...');
+  const [hostMessage, setHostMessage] = useState<string>('AJ & VJ ON-AIR WAITING...');
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [urgency, setUrgency] = useState(0);
   const lastCommentTime = useRef(Date.now());
@@ -40,7 +40,7 @@ const App: React.FC = () => {
         }
       });
       updateDoc(doc(db, "games", roomCode), cleanUpdates);
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("Sync Error:", e); }
   };
 
   useEffect(() => {
@@ -57,29 +57,36 @@ const App: React.FC = () => {
     return unsub;
   }, [roomCode, audioEnabled, viewMode, urgency]);
 
-  // AI "Spectator" Logic: Roasts players for being slow or joining
+  // Urgency Timer for Questions
   useEffect(() => {
-    if (viewMode !== 'TV' || !audioEnabled) return;
-    const checkInterval = setInterval(async () => {
-      const now = Date.now();
-      if (now - lastCommentTime.current < 20000) return;
+    if (state.stage !== GameStage.QUESTION) { setUrgency(0); return; }
+    const timer = setInterval(() => setUrgency(p => Math.min(p + 0.1, 5)), 2000);
+    return () => clearInterval(timer);
+  }, [state.stage]);
 
-      let event = '';
-      if (state.stage === GameStage.LOBBY && state.players.length > 0) event = "Too many mokka players in lobby.";
-      if (state.stage === GameStage.QUESTION) {
-        const slowOnes = state.players.filter(p => !p.lastAnswer);
-        if (slowOnes.length > 0) event = `Player ${slowOnes[0].name} is too slow! Logic search panran?`;
-      }
+  // Auto Reveal Logic
+  useEffect(() => {
+    if (viewMode !== 'TV' || state.stage !== GameStage.QUESTION) return;
+    const allAnswered = state.players.length > 0 && state.players.every(p => !!p.lastAnswer);
+    if (allAnswered) {
+      setTimeout(() => {
+        sync({ stage: GameStage.REVEAL });
+        handleScoring();
+      }, 2000);
+    }
+  }, [state.players.map(p => p.lastAnswer).join(','), state.stage]);
 
-      if (event) {
-        const roast = await gemini.generateReactiveComment(state, event);
-        setHostMessage(roast);
-        gemini.speakText(roast, state.mode);
-        lastCommentTime.current = now;
-      }
-    }, 5000);
-    return () => clearInterval(checkInterval);
-  }, [state.stage, state.players.length, audioEnabled]);
+  const handleScoring = async () => {
+    let winner: Player | null = null;
+    if (state.mode === GameMode.ACTUALLY_GENIUS) {
+      winner = state.players.find(p => p.lastAnswer === (state.currentQuestion!.correctIndex + 1).toString()) || null;
+    } else {
+      winner = state.players[Math.floor(Math.random() * state.players.length)];
+    }
+    const roast = await gemini.generateReactiveComment(state, winner ? `Player ${winner.name} won the round!` : "No one won the round.");
+    setHostMessage(roast);
+    gemini.speakText(roast, state.mode);
+  };
 
   const handleJoin = async (name: string, age: number, lang: Language) => {
     if (!db || !roomCode) return;
@@ -88,21 +95,28 @@ const App: React.FC = () => {
     await updateDoc(doc(db, "games", roomCode), { players: arrayUnion(newPlayer) });
     setPlayerId(id);
     localStorage.setItem('AJ_PLAYER_ID', id);
-    
-    // Immediate Roast on Join
-    const roast = await gemini.generateReactiveComment(state, `Player ${name} just joined the game.`);
+    const roast = await gemini.generateReactiveComment(state, `Player ${name} just joined.`);
     setHostMessage(roast);
     gemini.speakText(roast, state.mode);
   };
 
   const handleStartGame = async () => {
+    if (state.players.length === 0) return;
     sync({ stage: GameStage.LOADING });
     const options = await gemini.generateTopicOptions(state);
     const pickerId = state.players[Math.floor(Math.random() * state.players.length)].id;
     sync({ stage: GameStage.TOPIC_SELECTION, topicOptions: options, topicPickerId: pickerId });
-    const msg = "AJ: Picker logic paru! VJ: Topic choose pannunga victims.";
-    setHostMessage(msg);
-    gemini.speakText(msg, state.mode);
+    const intro = "AJ: Let's start the MASH! VJ: Topic selection logic paru.";
+    setHostMessage(intro);
+    gemini.speakText(intro, state.mode);
+  };
+
+  const handleToggleMode = () => {
+    const nextMode = state.mode === GameMode.CONFIDENTLY_WRONG ? GameMode.ACTUALLY_GENIUS : GameMode.CONFIDENTLY_WRONG;
+    sync({ mode: nextMode });
+    const roast = nextMode === GameMode.ACTUALLY_GENIUS ? "AJ: Mode changed to Genius! VJ: IQ search start pannu." : "AJ: Mokka Mode is ON! VJ: Logic dead forever.";
+    setHostMessage(roast);
+    gemini.speakText(roast, nextMode);
   };
 
   return (
@@ -110,17 +124,29 @@ const App: React.FC = () => {
       {viewMode === 'TV' ? (
         <div className="h-full relative">
           <TVView state={state} hostMessage={hostMessage} iqData="" onReset={() => sync({ stage: GameStage.LOBBY, players: state.players.map(p => ({...p, score: 0, lastAnswer: ''})) })} onStop={() => sync({ stage: GameStage.LOBBY })} />
-          {!audioEnabled && (
-            <div className="fixed inset-0 bg-black/95 z-[1000] flex flex-col items-center justify-center p-20 text-center">
-               <h1 className="text-[12rem] font-black italic uppercase leading-none mb-12 tracking-tighter text-fuchsia-500 animate-pulse">MIND MASH</h1>
-               <button onClick={async () => { await gemini.initAudio(); setAudioEnabled(true); gemini.updateBGM(state.stage); }} className="bg-white text-black px-32 py-10 rounded-full text-6xl font-black shadow-3xl hover:scale-110 active:scale-95 transition-all">START BROADCAST</button>
-            </div>
-          )}
-          {audioEnabled && state.stage === GameStage.LOBBY && (
-            <div className="fixed bottom-32 left-1/2 -translate-x-1/2 z-[500]">
-               <button onClick={handleStartGame} className="bg-fuchsia-600 px-24 py-10 rounded-full text-7xl font-black border-4 border-white shadow-3xl uppercase hover:bg-fuchsia-500 transition-all">GO LIVE 🚀</button>
-            </div>
-          )}
+          
+          {/* CONSOLIDATED CONTROL BAR */}
+          <div className="fixed bottom-0 left-0 w-full p-8 flex justify-center items-center gap-12 bg-gradient-to-t from-black to-transparent z-[900]">
+            {!audioEnabled ? (
+              <button onClick={async () => { await gemini.initAudio(); setAudioEnabled(true); gemini.updateBGM(state.stage); }} className="bg-white text-black px-16 py-6 rounded-full text-4xl font-black shadow-3xl hover:scale-105 active:scale-95 transition-all">ACTIVATE RADIO 🎙️</button>
+            ) : (
+              <div className="flex items-center gap-8">
+                {state.stage === GameStage.LOBBY && (
+                  <>
+                    <button onClick={handleToggleMode} className={`px-10 py-4 rounded-full text-2xl font-black border-4 transition-all ${state.mode === GameMode.ACTUALLY_GENIUS ? 'bg-emerald-600 border-white' : 'bg-blue-600 border-blue-400'}`}>
+                      {state.mode === GameMode.ACTUALLY_GENIUS ? 'MODE: GENIUS 🧠' : 'MODE: MOKKA 🤡'}
+                    </button>
+                    <button onClick={handleStartGame} disabled={state.players.length === 0} className={`bg-fuchsia-600 px-24 py-8 rounded-full text-5xl font-black border-4 border-white shadow-3xl uppercase transition-all ${state.players.length === 0 ? 'opacity-20 scale-90' : 'hover:bg-fuchsia-500 hover:scale-105'}`}>
+                      GO LIVE 🚀
+                    </button>
+                  </>
+                )}
+                {state.stage !== GameStage.LOBBY && (
+                   <button onClick={() => sync({ stage: GameStage.LOBBY })} className="bg-red-600/30 px-12 py-4 rounded-full font-black uppercase text-xl border-2 border-red-500 hover:bg-red-600 transition-all">END SHOW</button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <PhoneView state={state} playerId={playerId} onJoin={handleJoin} onSelectTopic={async (t) => {
@@ -128,7 +154,7 @@ const App: React.FC = () => {
           const q = await gemini.generateQuestion({ ...state, topic: t });
           sync({ currentQuestion: q, stage: GameStage.QUESTION, players: state.players.map(p => ({ ...p, lastAnswer: '' })) });
         }} onSubmitAnswer={(a) => sync({ players: state.players.map(p => p.id === playerId ? { ...p, lastAnswer: a } : p) })} onRoast={async () => {
-          const roast = await gemini.generateReactiveComment(state, `Player ${state.players.find(p=>p.id===playerId)?.name} is asking for a roast!`);
+          const roast = await gemini.generateReactiveComment(state, `Roast request from ${state.players.find(p=>p.id===playerId)?.name}`);
           setHostMessage(roast);
           gemini.speakText(roast, state.mode);
         }} onReaction={(e) => updateDoc(doc(db, "games", roomCode), { reactions: arrayUnion({ id: Math.random().toString(), emoji: e, x: Math.random() * 80 + 10 }) })} onReset={() => { localStorage.clear(); window.location.reload(); }} />

@@ -10,22 +10,22 @@ let currentBPM = 110;
 
 const duckMusic = (isSpeaking: boolean) => {
   if (!musicGainNode || !sharedAudioCtx) return;
-  const target = isSpeaking ? 0.03 : 0.3;
-  musicGainNode.gain.setTargetAtTime(target, sharedAudioCtx.currentTime, 0.3);
+  const target = isSpeaking ? 0.02 : 0.28;
+  musicGainNode.gain.setTargetAtTime(target, sharedAudioCtx.currentTime, 0.2);
 };
 
 export const updateBGM = (stage: GameStage, urgency: number = 0) => {
   if (!sharedAudioCtx) return;
   if (!musicGainNode) {
     musicGainNode = sharedAudioCtx.createGain();
-    musicGainNode.gain.setValueAtTime(0.3, sharedAudioCtx.currentTime);
+    musicGainNode.gain.setValueAtTime(0.28, sharedAudioCtx.currentTime);
     musicGainNode.connect(sharedAudioCtx.destination);
   }
   
-  let bpm = 110;
-  if (stage === GameStage.QUESTION) bpm = 135 + (urgency * 5);
-  if (stage === GameStage.REVEAL) bpm = 128;
-  if (stage === GameStage.TOPIC_SELECTION) bpm = 118;
+  let bpm = 115;
+  if (stage === GameStage.QUESTION) bpm = 145 + (urgency * 8);
+  if (stage === GameStage.REVEAL) bpm = 130;
+  if (stage === GameStage.TOPIC_SELECTION) bpm = 122;
 
   if (bpm === currentBPM && musicInterval) return;
   
@@ -38,29 +38,16 @@ export const updateBGM = (stage: GameStage, urgency: number = 0) => {
     if (!sharedAudioCtx || !musicGainNode) return;
     const time = sharedAudioCtx.currentTime;
     
-    // Hard Gana Kick
+    // Pulse Kick
     if (beat % 4 === 0) {
       const osc = sharedAudioCtx.createOscillator();
       const g = sharedAudioCtx.createGain();
-      osc.frequency.setValueAtTime(115, time);
-      osc.frequency.exponentialRampToValueAtTime(0.01, time + 0.15);
+      osc.frequency.setValueAtTime(110, time);
+      osc.frequency.exponentialRampToValueAtTime(0.01, time + 0.1);
       g.gain.setValueAtTime(0.4, time);
-      g.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+      g.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
       osc.connect(g); g.connect(musicGainNode!);
-      osc.start(time); osc.stop(time + 0.15);
-    }
-    // Gritty Snare
-    if (beat % 4 === 2) {
-      const noise = sharedAudioCtx.createBufferSource();
-      const buf = sharedAudioCtx.createBuffer(1, 4096, sharedAudioCtx.sampleRate);
-      const d = buf.getChannelData(0);
-      for (let i = 0; i < 4096; i++) d[i] = Math.random() * 2 - 1;
-      noise.buffer = buf;
-      const g = sharedAudioCtx.createGain();
-      g.gain.setValueAtTime(0.12, time);
-      g.gain.exponentialRampToValueAtTime(0.001, time + 0.08);
-      noise.connect(g); g.connect(musicGainNode!);
-      noise.start(time);
+      osc.start(time); osc.stop(time + 0.1);
     }
     beat = (beat + 1) % 16;
   }, interval / 2);
@@ -75,15 +62,16 @@ export const initAudio = async () => {
 };
 
 const getSystemInstruction = (mode: GameMode) => {
-  return `You are AJ and VJ, a savage Tanglish RJ duo. 
-  MANDATORY: 100% Tanglish (English words mixed with raw Tamil slang).
-  NO "Hello", NO "I am your host". Start with "Enna ya", "Oyy", "Dei".
-  Personality:
-  AJ: Rough, roasts everything, Gubeer laughter.
-  VJ: Sharp, sarcastic, calls people "Logic pieces".
-  Mode: ${mode === GameMode.ACTUALLY_GENIUS ? 'Searching for the ONE clever bot among losers.' : 'Looking for the biggest mokka/logic-less answer.'}
-  Structure: "AJ: [slang phrase] VJ: [sarcastic comeback]". 
-  Keep it to 2 short sentences total. Be extremely lively.`;
+  const modeContext = mode === GameMode.ACTUALLY_GENIUS 
+    ? "MODE: ACTUALLY GENIUS. You are looking for the Einstein of Tanglish. Roast the losers who answer wrong. AJ is strict, VJ is judgmental."
+    : "MODE: CONFIDENTLY WRONG. You are celebrating logical-less mokka. The weirdest answer wins. AJ is chaotic, VJ is laughing at the nonsense.";
+
+  return `You are AJ and VJ, the legendary Tanglish RJ duo from Chennai.
+  ${modeContext}
+  MANDATORY: 100% Tanglish (English + Tamil slang mix). No formal intro.
+  SLANG: Gubeer, Mokka, Vera Level, Oyy, Dei, Logic Piece, Gaali, Scene-u.
+  DIALOGUE: "AJ: [slang phrase] VJ: [roast/laugh]". Max 8-10 words total.
+  Be loud, energetic, and aggressive. If lobby is empty, scream at the screen.`;
 };
 
 export const speakText = async (text: string, mode: GameMode = GameMode.CONFIDENTLY_WRONG) => {
@@ -95,7 +83,7 @@ export const speakText = async (text: string, mode: GameMode = GameMode.CONFIDEN
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: `High-energy savage Tanglish dialogue for a radio show: ${text}` }] }],
+      contents: [{ parts: [{ text: `High-octane radio-style Tanglish RJ banter: ${text}` }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
@@ -118,7 +106,9 @@ export const speakText = async (text: string, mode: GameMode = GameMode.CONFIDEN
       source.onended = () => duckMusic(false);
       source.start();
     }
-  } catch (e) { speakNativeFallback(text); }
+  } catch (e) {
+    speakNativeFallback(text);
+  }
 };
 
 export const generateReactiveComment = async (state: GameState, event: string) => {
@@ -126,11 +116,11 @@ export const generateReactiveComment = async (state: GameState, event: string) =
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: `React to this event: ${event}. Make it a short Tanglish roast.`,
+      contents: `React to: ${event}. Tanglish roast.`,
       config: { systemInstruction: getSystemInstruction(state.mode) },
     });
-    return res.text || "AJ: Enna ya logic gaali? VJ: Semma mokka.";
-  } catch (e) { return "AJ: Chaos start-u! VJ: Logic dead-u."; }
+    return res.text || "AJ: Logic piece-u joins! VJ: Semma mokka name.";
+  } catch (e) { return "AJ: Start the mash! VJ: Logic dead."; }
 };
 
 export const generateTopicOptions = async (state: GameState) => {
@@ -138,15 +128,15 @@ export const generateTopicOptions = async (state: GameState) => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: "3 hilarious Tanglish categories for a party game.",
+      contents: "3 unique Tanglish categories for a radio game.",
       config: { 
-        systemInstruction: "Return JSON string array in Tanglish slang.",
+        systemInstruction: "Return JSON string array.",
         responseMimeType: "application/json",
         responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
       },
     });
-    return JSON.parse(res.text || '["Cinema Gubeer", "Food Crimes", "Logic Illa"]');
-  } catch (e) { return ["Cinema", "Logic Crimes", "Food Logic"]; }
+    return JSON.parse(res.text || '["Cinema Mokka", "Food Logic", "Gubeer Humor"]');
+  } catch (e) { return ["Cinema", "Logic Crimes", "Food"]; }
 };
 
 export const generateQuestion = async (state: GameState) => {
@@ -154,7 +144,7 @@ export const generateQuestion = async (state: GameState) => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: `Topic is ${state.topic}. Generate a logical-less or clever question.`,
+      contents: `Topic: ${state.topic}. Mode: ${state.mode}. Generate tricky Tanglish question.`,
       config: { 
         systemInstruction: getSystemInstruction(state.mode) + " Return JSON.",
         responseMimeType: "application/json",
