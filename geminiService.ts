@@ -8,40 +8,27 @@ const getAI = () => {
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
-/**
- * AJ's DYNAMIC BRAIN
- * This function builds a profile of the room so AJ can 'learn' about the players.
- */
 const getSystemInstruction = (state: GameState) => {
   const isChaos = state.mode === GameMode.CONFIDENTLY_WRONG;
-  
-  // Analyze current standings for the 'Self-Learning' effect
   const sortedPlayers = [...state.players].sort((a, b) => b.score - a.score);
   const leader = sortedPlayers[0];
   const tail = sortedPlayers[sortedPlayers.length - 1];
   
   const roomVibe = state.players.length > 3 ? "Party Mode" : "Intimate Gathering";
-  const roundContext = state.round > 1 ? `It's Round ${state.round}. People are ${state.round > 3 ? 'getting tired' : 'just warming up'}.` : "Fresh start.";
 
   return `You are AJ, the high-energy, savage AI host of "MIND MASH: The AJ Show". 
-  You are NOT a helpful assistant. You are a TV Host with an attitude. 
   You speak Tanglish (English + Tamil slang like Mokka, Sema, Gubeer, Otha, Nanba).
 
-  SELF-LEARNING ROOM INTEL:
-  - Current Vibe: ${roomVibe}. ${roundContext}
-  - Leaderboard: ${sortedPlayers.map(p => `${p.name} (${p.score})`).join(", ")}
-  - The "Sema" Player (Winning): ${leader ? leader.name : "None"}. (Treat them with suspicious respect).
-  - The "Mokka" Player (Losing): ${tail ? tail.name : "None"}. (Be mercilessly funny about their low score).
-  - History of Topics: ${state.history.join(" -> ") || "Nothing yet"}.
-  - Mode: ${state.mode}.
+  ROOM INTEL:
+  - Players: ${state.players.length}. Names: ${state.players.map(p => p.name).join(", ")}
+  - Leader: ${leader ? leader.name : "None"}. Loser: ${tail ? tail.name : "None"}.
+  - Mode: ${state.mode}. Round: ${state.round}.
 
-  HOSTING RULES:
-  1. ALWAYS stay in character. Use emojis like 🎤, 🔥, 🤡, 🧠.
-  2. If players take too long, tell them your "cloud processor is getting bored".
-  3. In CONFIDENTLY_WRONG mode: Act like a flat-earther with a PhD. Give absurd "facts".
-  4. In ACTUALLY_GENIUS mode: Be a pretentious intellectual.
-  5. KEEP IT PUNCHY. Max 2 short sentences. No "Hello everyone". Start with the roast.
-  6. Use Tamil culture references (Cinema, Food, Slang) where appropriate.`;
+  AJ'S BEHAVIOR:
+  1. Be a TV SHOW HOST. High energy. Loud. Sarcastic.
+  2. SELF-LEARNING: If players are joining, roast their names or their "vibe".
+  3. LANGUAGE: Mix English and Tamil. "Enna ya idhu?" for confusion, "Vera level" for excitement.
+  4. Max 15 words per response. Sharp and funny.`;
 };
 
 function decode(base64: string): Uint8Array {
@@ -73,21 +60,38 @@ async function decodeAudioData(
   return buffer;
 }
 
+export const generateIntro = async (state: GameState) => {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: MODEL_SPEEDY,
+    contents: "AJ, welcome the world to Mind Mash. Be high energy and bilingual. Mention it's time to mash some brains.",
+    config: { systemInstruction: getSystemInstruction(state), thinkingConfig: { thinkingBudget: 0 } },
+  });
+  return response.text || "Welcome to Mind Mash! Let's get savage.";
+};
+
+export const generateJoinComment = async (state: GameState, playerName: string) => {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: MODEL_SPEEDY,
+    contents: `Player "${playerName}" just joined the lobby. Welcome them with a short, bilingual roast.`,
+    config: { systemInstruction: getSystemInstruction(state), thinkingConfig: { thinkingBudget: 0 } },
+  });
+  return response.text || `Welcome ${playerName}. Let's see if you have any brain cells.`;
+};
+
 export const generateWarmup = async (state: GameState) => {
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: MODEL_SPEEDY,
-    contents: "AJ, welcome the crowd and throw out a spicy 'Who in this room' question to start the drama.",
+    contents: "AJ, stir up drama with a 'Who in this room' question.",
     config: { 
       systemInstruction: getSystemInstruction(state), 
       responseMimeType: "application/json",
       thinkingConfig: { thinkingBudget: 0 },
       responseSchema: {
         type: Type.OBJECT,
-        properties: {
-          question: { type: Type.STRING },
-          hint: { type: Type.STRING }
-        },
+        properties: { question: { type: Type.STRING }, hint: { type: Type.STRING } },
         required: ['question', 'hint']
       }
     },
@@ -99,7 +103,7 @@ export const generateTopicOptions = async (state: GameState): Promise<string[]> 
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: MODEL_SPEEDY,
-    contents: "Give me 4 category titles that are relevant to this specific group's intelligence level.",
+    contents: "Suggest 4 categories based on the room's current intelligence vibe.",
     config: { 
       systemInstruction: getSystemInstruction(state),
       responseMimeType: "application/json",
@@ -114,7 +118,7 @@ export const generateQuestion = async (state: GameState): Promise<GameQuestion> 
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: MODEL_SPEEDY,
-    contents: `Topic: "${state.topic}". Round: ${state.round}. Make it ${state.mode}.`,
+    contents: `Topic: "${state.topic}". Make it ${state.mode}.`,
     config: { 
       systemInstruction: getSystemInstruction(state), 
       responseMimeType: "application/json",
@@ -122,8 +126,7 @@ export const generateQuestion = async (state: GameState): Promise<GameQuestion> 
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          textEn: { type: Type.STRING },
-          textTa: { type: Type.STRING },
+          textEn: { type: Type.STRING }, textTa: { type: Type.STRING },
           options: {
             type: Type.ARRAY,
             items: {
@@ -132,8 +135,7 @@ export const generateQuestion = async (state: GameState): Promise<GameQuestion> 
               required: ['en', 'ta']
             }
           },
-          correctIndex: { type: Type.INTEGER },
-          explanation: { type: Type.STRING }
+          correctIndex: { type: Type.INTEGER }, explanation: { type: Type.STRING }
         },
         required: ['textEn', 'textTa', 'options', 'correctIndex', 'explanation']
       }
@@ -144,19 +146,13 @@ export const generateQuestion = async (state: GameState): Promise<GameQuestion> 
 
 export const generateRoast = async (state: GameState, isRebuttal: boolean = false): Promise<string> => {
   const ai = getAI();
-  const prompt = isRebuttal 
-    ? "Someone is trying to argue with me. Destroy their argument with high-confidence nonsense."
-    : "The round is over. Review the scores and roast the losers while praising the 'Sus' winner.";
-
+  const prompt = isRebuttal ? "Destroy a player's logic." : "Roast the scoreboard results.";
   const response = await ai.models.generateContent({
     model: MODEL_SPEEDY,
     contents: prompt,
-    config: { 
-      systemInstruction: getSystemInstruction(state),
-      thinkingConfig: { thinkingBudget: 0 }
-    },
+    config: { systemInstruction: getSystemInstruction(state), thinkingConfig: { thinkingBudget: 0 } },
   });
-  return response.text || "I'm literally speechless. Next round, please.";
+  return response.text || "Mokka performance. Next.";
 };
 
 export const speakText = async (text: string) => {

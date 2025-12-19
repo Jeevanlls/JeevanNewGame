@@ -24,6 +24,8 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
+  const prevPlayerCount = useRef(0);
+
   const [state, setState] = useState<GameState>({
     roomCode: roomCode, 
     stage: GameStage.LOBBY, 
@@ -35,10 +37,9 @@ const App: React.FC = () => {
     topicOptions: []
   });
 
-  // Master Listener for Cloud State
+  // Master Listener
   useEffect(() => {
     if (!roomCode || !db) return;
-
     setIsSyncing(true);
     const unsub = onSnapshot(doc(db, "games", roomCode), (snapshot) => {
       if (snapshot.exists()) {
@@ -47,16 +48,29 @@ const App: React.FC = () => {
         setIsSyncing(false);
         setError(null);
       } else if (viewMode === 'PHONE') {
-        setError("Room not found. Did you type the code right?");
+        setError("Room not found. Check the code on TV.");
       }
     }, (err) => {
-      console.error("Firestore Subscribe Error:", err);
       setError("Cloud connection lost.");
     });
     return unsub;
   }, [roomCode, viewMode]);
 
-  // TV Room Initialization
+  // AJ Reacts to Players Joining the Lobby
+  useEffect(() => {
+    if (viewMode === 'TV' && audioEnabled && state.stage === GameStage.LOBBY) {
+      if (state.players.length > prevPlayerCount.current) {
+        const lastPlayer = state.players[state.players.length - 1];
+        gemini.generateJoinComment(state, lastPlayer.name).then(roast => {
+          setHostMessage(roast);
+          gemini.speakText(roast);
+        });
+      }
+      prevPlayerCount.current = state.players.length;
+    }
+  }, [state.players.length, audioEnabled, viewMode]);
+
+  // TV Initialization
   useEffect(() => {
     if (viewMode === 'TV' && !roomCode && db) {
       const code = Math.random().toString(36).substr(2, 4).toUpperCase();
@@ -70,13 +84,10 @@ const App: React.FC = () => {
         history: [], 
         topicOptions: []
       };
-      
-      setDoc(doc(db, "games", code), initialState)
-        .then(() => {
-          setRoomCode(code);
-          setState(initialState);
-        })
-        .catch(e => setError("Could not create cloud room."));
+      setDoc(doc(db, "games", code), initialState).then(() => {
+        setRoomCode(code);
+        setState(initialState);
+      });
     }
   }, [viewMode, roomCode]);
 
@@ -84,17 +95,14 @@ const App: React.FC = () => {
     if (!db || !roomCode) return;
     try {
       await updateDoc(doc(db, "games", roomCode), updates);
-    } catch (e) {
-      console.error("Cloud Sync Failed:", e);
-    }
+    } catch (e) { console.error("Cloud Sync Failed:", e); }
   };
 
-  const toggleMode = () => {
-    const newMode = state.mode === GameMode.CONFIDENTLY_WRONG ? GameMode.ACTUALLY_GENIUS : GameMode.CONFIDENTLY_WRONG;
-    sync({ mode: newMode });
-    const msg = newMode === GameMode.ACTUALLY_GENIUS ? "Activating Genius Mode. Brains please." : "Activating Chaos Mode. Intelligence is forbidden.";
-    setHostMessage(msg);
-    if (audioEnabled) gemini.speakText(msg);
+  const handleStartShow = async () => {
+    setAudioEnabled(true);
+    const intro = await gemini.generateIntro(state);
+    setHostMessage(intro);
+    gemini.speakText(intro);
   };
 
   const handleJoin = async (name: string, age: number, lang: Language) => {
@@ -103,21 +111,23 @@ const App: React.FC = () => {
     const newPlayer: Player = { id, name, age, score: 0, traits: [], preferredLanguage: lang };
     
     try {
-      // Use a transaction to ensure no concurrent write issues
       await runTransaction(db, async (transaction) => {
         const docRef = doc(db, "games", roomCode);
         const snap = await transaction.get(docRef);
-        if (!snap.exists()) throw "Room doesn't exist";
-        
+        if (!snap.exists()) throw "Room Expired";
         const currentPlayers = snap.data().players || [];
         transaction.update(docRef, { players: [...currentPlayers, newPlayer] });
       });
-      
       setPlayerId(id);
       localStorage.setItem('AJ_PLAYER_ID', id);
-    } catch (e) {
-      setError("Join failed. Try again.");
-    }
+    } catch (e) { setError("Join failed. Is the room still active?"); }
+  };
+
+  const resetPhoneSession = () => {
+    localStorage.removeItem('AJ_PLAYER_ID');
+    setPlayerId('');
+    setError(null);
+    window.location.reload();
   };
 
   const startWarmup = async () => {
@@ -132,7 +142,7 @@ const App: React.FC = () => {
     const master = state.players[Math.floor(Math.random() * state.players.length)];
     const options = await gemini.generateTopicOptions(state);
     await sync({ stage: GameStage.SELECTOR_REVEAL, topicPickerId: master.id, topicOptions: options });
-    const msg = `${master.name}, you are the Topic Master. Pick something spicy.`;
+    const msg = `${master.name}, pick a category. Don't embarrass yourself.`;
     setHostMessage(msg);
     if (audioEnabled) gemini.speakText(msg);
     setTimeout(() => sync({ stage: GameStage.TOPIC_SELECTION }), 2500);
@@ -155,13 +165,6 @@ const App: React.FC = () => {
     setHostMessage(roast);
     await sync({ stage: GameStage.VOTING_RESULTS, hostRoast: roast });
     if (audioEnabled) gemini.speakText(roast);
-  };
-
-  const handleRebuttal = async () => {
-    const response = await gemini.generateRoast(state, true);
-    setHostMessage(response);
-    sync({ hostRoast: response });
-    if (audioEnabled) gemini.speakText(response);
   };
 
   const endRound = async () => {
@@ -191,19 +194,13 @@ const App: React.FC = () => {
             <div className="fixed inset-0 bg-black/90 backdrop-blur-2xl flex flex-col items-center justify-center z-[500] p-10 text-center">
               <div className="w-32 h-32 bg-fuchsia-600 rounded-full flex items-center justify-center text-6xl mb-10 shadow-[0_0_60px_rgba(192,38,211,0.5)] animate-pulse">🎤</div>
               <h1 className="text-7xl font-black mb-10 italic tracking-tighter uppercase">WAKE UP AJ</h1>
-              <button 
-                onClick={() => { setAudioEnabled(true); gemini.speakText("AJ is in the building. Brains on, please."); }} 
-                className="bg-fuchsia-600 hover:bg-fuchsia-500 px-24 py-12 rounded-[3rem] text-5xl font-black shadow-2xl border-4 border-white transition-all transform hover:scale-105 active:scale-95"
-              >
-                START THE SHOW
-              </button>
+              <button onClick={handleStartShow} className="bg-fuchsia-600 hover:bg-fuchsia-500 px-24 py-12 rounded-[3rem] text-5xl font-black shadow-2xl border-4 border-white transition-all transform hover:scale-105 active:scale-95">START THE SHOW</button>
             </div>
           ) : (
-            <div className="fixed bottom-10 left-1/2 -translate-x-1/2 flex gap-4 pointer-events-auto z-[100] animate-in slide-in-from-bottom-10">
+            <div className="fixed bottom-10 left-1/2 -translate-x-1/2 flex gap-4 pointer-events-auto z-[100]">
                {state.stage === GameStage.LOBBY && state.players.length >= 1 && (
                   <button onClick={startWarmup} className="bg-indigo-600 hover:bg-indigo-500 px-16 py-6 rounded-full text-3xl font-black shadow-2xl border-4 border-white/20 hover:scale-105 transition-all">LET'S GO</button>
                )}
-               {state.stage === GameStage.LOBBY && <button onClick={toggleMode} className="bg-white/10 px-8 py-4 rounded-full font-black text-sm uppercase border border-white/20">{state.mode === GameMode.CONFIDENTLY_WRONG ? 'WRONG MODE' : 'GENIUS MODE'}</button>}
                {state.stage === GameStage.WARMUP && <button onClick={startTopicSelection} className="bg-blue-600 px-12 py-5 rounded-full font-black uppercase shadow-xl hover:scale-105 transition-all">SELECT TOPIC</button>}
                {state.stage === GameStage.QUESTION && <button onClick={revealRound} className="bg-purple-600 px-12 py-5 rounded-full font-black uppercase shadow-xl hover:scale-105 transition-all">JUDGE ANSWERS</button>}
                {state.stage === GameStage.VOTING_RESULTS && <button onClick={endRound} className="bg-pink-600 px-12 py-5 rounded-full font-black uppercase shadow-xl hover:scale-105 transition-all">SCOREBOARD</button>}
@@ -212,7 +209,7 @@ const App: React.FC = () => {
           )}
         </div>
       ) : (
-        <PhoneView state={state} playerId={playerId} onJoin={handleJoin} onSelectTopic={setTopic} onSubmitAnswer={(a) => sync({ players: state.players.map(p => p.id === playerId ? { ...p, lastAnswer: a } : p) })} onClaimChallenge={()=>{}} onSendRebuttal={handleRebuttal} />
+        <PhoneView state={state} playerId={playerId} onJoin={handleJoin} onSelectTopic={setTopic} onSubmitAnswer={(a) => sync({ players: state.players.map(p => p.id === playerId ? { ...p, lastAnswer: a } : p) })} onClaimChallenge={()=>{}} onSendRebuttal={()=>{}} onReset={resetPhoneSession} />
       )}
     </div>
   );
