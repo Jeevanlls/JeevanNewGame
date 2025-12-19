@@ -1,0 +1,7 @@
+{
+  "name": "AI Family Party Jam",
+  "description": "A bilingual (English/Tamil) AI-hosted party game for families. The AI acts as a witty host, generating unique questions and reacting to player answers in real-time.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
