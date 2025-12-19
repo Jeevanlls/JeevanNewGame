@@ -1,16 +1,48 @@
-import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
 
-// The error "Consumer 'projects/undefined'" indicates the projectId is missing.
-// We check for various standard environment variable names to ensure connectivity.
-const firebaseConfig = {
-  apiKey: process.env.FIREBASE_API_KEY || process.env.API_KEY || (import.meta as any).env?.VITE_FIREBASE_API_KEY,
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN || (import.meta as any).env?.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.FIREBASE_PROJECT_ID || process.env.PROJECT_ID || (import.meta as any).env?.VITE_FIREBASE_PROJECT_ID || "mind-mash-default",
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || (import.meta as any).env?.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || (import.meta as any).env?.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.FIREBASE_APP_ID || (import.meta as any).env?.VITE_FIREBASE_APP_ID
+// Use namespace import to resolve "no exported member" errors in certain build environments
+import * as firebaseApp from "firebase/app";
+import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
+
+// Helper to get environment variables from different possible sources (Vite, Process, etc.)
+const getEnv = (key: string) => {
+  const value = process.env[key] || (import.meta as any).env?.[`VITE_${key}`] || (import.meta as any).env?.[key];
+  return (value === "undefined" || value === "null" || !value) ? undefined : value;
 };
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+const firebaseConfig = {
+  apiKey: getEnv("FIREBASE_API_KEY") || getEnv("API_KEY"),
+  authDomain: getEnv("FIREBASE_AUTH_DOMAIN"),
+  projectId: getEnv("FIREBASE_PROJECT_ID") || getEnv("PROJECT_ID"),
+  storageBucket: getEnv("FIREBASE_STORAGE_BUCKET"),
+  messagingSenderId: getEnv("FIREBASE_MESSAGING_SENDER_ID"),
+  appId: getEnv("FIREBASE_APP_ID")
+};
+
+// Only initialize if we have at least a project ID. 
+let db: any = null;
+
+if (firebaseConfig.projectId) {
+  try {
+    // Check if there are already initialized apps to avoid the "Firebase: App named '[DEFAULT]' already exists" error during HMR
+    const apps = firebaseApp.getApps();
+    const app = apps.length === 0 ? firebaseApp.initializeApp(firebaseConfig) : firebaseApp.getApp();
+    db = getFirestore(app);
+    
+    // Enable offline persistence for better user experience in flaky network conditions
+    enableIndexedDbPersistence(db).catch((err) => {
+      if (err.code === 'failed-precondition') {
+        // Multiple tabs open, persistence can only be enabled in one tab at a time.
+        console.warn("Firebase persistence failed: multiple tabs open.");
+      } else if (err.code === 'unimplemented') {
+        // The current browser does not support all of the features required to enable persistence
+        console.warn("Firebase persistence not supported by browser.");
+      }
+    });
+  } catch (e) {
+    console.error("Firebase Initialization Failed:", e);
+  }
+} else {
+  console.warn("Firebase Project ID is missing. App is running in local-only mode.");
+}
+
+export { db };

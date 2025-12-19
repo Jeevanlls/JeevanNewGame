@@ -1,14 +1,13 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { GameState, GameStage, Language, Player, GameMode } from './types';
 import TVView from './components/TVView';
 import PhoneView from './components/PhoneView';
 import * as gemini from './geminiService';
 import { db } from './firebase';
-import { doc, onSnapshot, setDoc, updateDoc, getDoc } from "firebase/firestore";
+import { doc, onSnapshot, setDoc, updateDoc } from "firebase/firestore";
 
 const App: React.FC = () => {
-  const [viewMode, setViewMode] = useState<'TV' | 'PHONE'>(() => {
+  const [viewMode] = useState<'TV' | 'PHONE'>(() => {
     const params = new URLSearchParams(window.location.search);
     return params.has('room') ? 'PHONE' : 'TV';
   });
@@ -21,6 +20,7 @@ const App: React.FC = () => {
   const [playerId, setPlayerId] = useState<string>(() => localStorage.getItem('AJ_PLAYER_ID') || '');
   const [hostMessage, setHostMessage] = useState<string>('Welcome to MIND MASH. AJ is currently calculating your IQ... it shouldn\'t take long.');
   const [audioEnabled, setAudioEnabled] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
   
   const [state, setState] = useState<GameState>({
     roomCode: roomCode, 
@@ -33,15 +33,40 @@ const App: React.FC = () => {
     topicOptions: []
   });
 
+  // BroadcastChannel for cross-tab communication fallback
+  const channelRef = useRef<BroadcastChannel | null>(null);
+
   useEffect(() => {
-    if (!roomCode) return;
+    channelRef.current = new BroadcastChannel(`mind-mash-${roomCode || 'global'}`);
+    channelRef.current.onmessage = (event) => {
+      // Only update state from channel if we are in offline/local sync mode
+      if (isOffline) {
+        setState(event.data);
+      }
+    };
+    return () => channelRef.current?.close();
+  }, [roomCode, isOffline]);
+
+  const localSync = (newState: GameState) => {
+    setState(newState);
+    channelRef.current?.postMessage(newState);
+  };
+
+  useEffect(() => {
+    if (!roomCode || !db) {
+      if (!db && roomCode) setIsOffline(true);
+      return;
+    }
+
     const unsub = onSnapshot(doc(db, "games", roomCode), (snapshot) => {
       if (snapshot.exists()) {
         setState(snapshot.data() as GameState);
+        setIsOffline(false);
       }
     }, (error) => {
-      console.error("Firestore Error:", error);
-      setHostMessage("Connection issues? AJ is unimpressed.");
+      console.error("Firestore Error, switching to local sync:", error);
+      setIsOffline(true);
+      setHostMessage("Cloud sync lost. AJ is now running on emergency backup batteries. (Local mode active)");
     });
     return unsub;
   }, [roomCode]);
@@ -49,7 +74,7 @@ const App: React.FC = () => {
   useEffect(() => {
     if (viewMode === 'TV' && !roomCode) {
       const code = Math.random().toString(36).substr(2, 4).toUpperCase();
-      setDoc(doc(db, "games", code), {
+      const initialState: GameState = {
         roomCode: code, 
         stage: GameStage.LOBBY, 
         players: [], 
@@ -58,16 +83,31 @@ const App: React.FC = () => {
         round: 1, 
         history: [], 
         topicOptions: []
-      });
+      };
+      
+      if (db) {
+        setDoc(doc(db, "games", code), initialState).catch(() => setIsOffline(true));
+      } else {
+        setIsOffline(true);
+      }
       setRoomCode(code);
+      setState(initialState);
     }
   }, [viewMode, roomCode]);
 
-  const sync = (updates: Partial<GameState>) => {
-    if (!roomCode) return;
-    updateDoc(doc(db, "games", roomCode), updates).catch(err => {
-      console.error("Sync Error:", err);
-    });
+  const sync = async (updates: Partial<GameState>) => {
+    const newState = { ...state, ...updates };
+    if (!isOffline && db && roomCode) {
+      try {
+        await updateDoc(doc(db, "games", roomCode), updates);
+      } catch (e) {
+        console.error("Sync failed, fallback to local:", e);
+        setIsOffline(true);
+        localSync(newState);
+      }
+    } else {
+      localSync(newState);
+    }
   };
 
   const toggleMode = () => {
@@ -83,10 +123,10 @@ const App: React.FC = () => {
   const handleJoin = async (name: string, age: number, lang: Language) => {
     const id = Math.random().toString(36).substr(2, 9);
     const newPlayer: Player = { id, name, age, score: 0, traits: [], preferredLanguage: lang };
-    const docRef = doc(db, "games", roomCode);
-    const snap = await getDoc(docRef);
-    const players = snap.exists() ? (snap.data().players || []) : [];
-    await updateDoc(docRef, { players: [...players, newPlayer] });
+    
+    const players = [...state.players, newPlayer];
+    await sync({ players });
+    
     setPlayerId(id);
     localStorage.setItem('AJ_PLAYER_ID', id);
   };
@@ -151,6 +191,12 @@ const App: React.FC = () => {
         <div className="h-full relative">
           <TVView state={state} hostMessage={hostMessage} iqData="" />
           
+          {isOffline && (
+            <div className="fixed top-4 right-4 bg-red-600/20 border border-red-600/50 px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest text-red-400 z-[200] animate-pulse">
+              Local Mode (No Cloud)
+            </div>
+          )}
+
           <div className="fixed inset-0 pointer-events-none flex flex-col items-center justify-center z-[50]">
             {!audioEnabled && (
               <button 
