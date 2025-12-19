@@ -12,6 +12,7 @@ export enum GameMode {
 
 export enum GameStage {
   LOBBY = 'LOBBY',
+  TUTORIAL = 'TUTORIAL',
   LOADING = 'LOADING',
   WARMUP = 'WARMUP',
   SELECTOR_REVEAL = 'SELECTOR_REVEAL',
