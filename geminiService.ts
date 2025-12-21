@@ -10,22 +10,28 @@ let currentBPM = 110;
 
 const duckMusic = (isSpeaking: boolean) => {
   if (!musicGainNode || !sharedAudioCtx) return;
-  const target = isSpeaking ? 0.02 : 0.28;
+  const target = isSpeaking ? 0.02 : 0.25;
   musicGainNode.gain.setTargetAtTime(target, sharedAudioCtx.currentTime, 0.2);
 };
 
-export const updateBGM = (stage: GameStage, urgency: number = 0) => {
-  if (!sharedAudioCtx) return;
-  if (!musicGainNode) {
-    musicGainNode = sharedAudioCtx.createGain();
-    musicGainNode.gain.setValueAtTime(0.28, sharedAudioCtx.currentTime);
-    musicGainNode.connect(sharedAudioCtx.destination);
+export const updateBGM = (stage: GameStage, urgency: number = 0, isPaused: boolean = false) => {
+  if (!sharedAudioCtx || isPaused) {
+    if (musicGainNode) musicGainNode.gain.setTargetAtTime(0, sharedAudioCtx?.currentTime || 0, 0.5);
+    return;
   }
   
-  let bpm = 115;
-  if (stage === GameStage.QUESTION) bpm = 145 + (urgency * 8);
-  if (stage === GameStage.REVEAL) bpm = 130;
-  if (stage === GameStage.TOPIC_SELECTION) bpm = 122;
+  if (!musicGainNode) {
+    musicGainNode = sharedAudioCtx.createGain();
+    musicGainNode.gain.setValueAtTime(0.25, sharedAudioCtx.currentTime);
+    musicGainNode.connect(sharedAudioCtx.destination);
+  } else {
+    musicGainNode.gain.setTargetAtTime(0.25, sharedAudioCtx.currentTime, 0.5);
+  }
+  
+  let bpm = 110;
+  if (stage === GameStage.QUESTION) bpm = 135 + (urgency * 12); 
+  if (stage === GameStage.REVEAL) bpm = 125;
+  if (stage === GameStage.TOPIC_SELECTION) bpm = 118;
 
   if (bpm === currentBPM && musicInterval) return;
   
@@ -38,16 +44,15 @@ export const updateBGM = (stage: GameStage, urgency: number = 0) => {
     if (!sharedAudioCtx || !musicGainNode) return;
     const time = sharedAudioCtx.currentTime;
     
-    // Pulse Kick
     if (beat % 4 === 0) {
       const osc = sharedAudioCtx.createOscillator();
       const g = sharedAudioCtx.createGain();
-      osc.frequency.setValueAtTime(110, time);
-      osc.frequency.exponentialRampToValueAtTime(0.01, time + 0.1);
-      g.gain.setValueAtTime(0.4, time);
-      g.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
+      osc.frequency.setValueAtTime(100, time);
+      osc.frequency.exponentialRampToValueAtTime(0.01, time + 0.15);
+      g.gain.setValueAtTime(0.5, time);
+      g.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
       osc.connect(g); g.connect(musicGainNode!);
-      osc.start(time); osc.stop(time + 0.1);
+      osc.start(time); osc.stop(time + 0.15);
     }
     beat = (beat + 1) % 16;
   }, interval / 2);
@@ -62,16 +67,17 @@ export const initAudio = async () => {
 };
 
 const getSystemInstruction = (mode: GameMode) => {
-  const modeContext = mode === GameMode.ACTUALLY_GENIUS 
-    ? "MODE: ACTUALLY GENIUS. You are looking for the Einstein of Tanglish. Roast the losers who answer wrong. AJ is strict, VJ is judgmental."
-    : "MODE: CONFIDENTLY WRONG. You are celebrating logical-less mokka. The weirdest answer wins. AJ is chaotic, VJ is laughing at the nonsense.";
+  const modeVibe = mode === GameMode.ACTUALLY_GENIUS 
+    ? "MODE: ACTUALLY GENIUS. Target: Brainy logic. Reward geniuses. Roast those who guess like logic pieces. AJ is ruthless, VJ is unimpressed."
+    : "MODE: CONFIDENTLY WRONG. Target: Mokka chaos. Reward the dumbest, funniest, most illogical answers. AJ and VJ love gubeer stuff.";
 
-  return `You are AJ and VJ, the legendary Tanglish RJ duo from Chennai.
-  ${modeContext}
-  MANDATORY: 100% Tanglish (English + Tamil slang mix). No formal intro.
-  SLANG: Gubeer, Mokka, Vera Level, Oyy, Dei, Logic Piece, Gaali, Scene-u.
-  DIALOGUE: "AJ: [slang phrase] VJ: [roast/laugh]". Max 8-10 words total.
-  Be loud, energetic, and aggressive. If lobby is empty, scream at the screen.`;
+  return `You are AJ and VJ, a savage, high-energy Tanglish RJ duo from Chennai.
+  ${modeVibe}
+  MANDATORY: Use "Mixed Tanglish" (50% English + 50% Chennai Slang). 
+  NEVER speak formal English. NEVER speak pure Tamil. 
+  KEY SLANG: Gubeer, Mokka, Vera Level, Oyy, Dei, Logic Piece, Gaali, Bulp-u, Scene-u, Mandaiya mela kondai-va.
+  STRUCTURE: "AJ: [slang roasting] VJ: [sarcastic laughter/burn]". 
+  Max 10 words total. Be loud, funny, and aggressive. If lobby is empty or players are slow, ROAST THEM HARD.`;
 };
 
 export const speakText = async (text: string, mode: GameMode = GameMode.CONFIDENTLY_WRONG) => {
@@ -83,7 +89,7 @@ export const speakText = async (text: string, mode: GameMode = GameMode.CONFIDEN
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: `High-octane radio-style Tanglish RJ banter: ${text}` }] }],
+      contents: [{ parts: [{ text: `Generate raw high-octane Chennai radio banter (Mixed Tanglish): ${text}` }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
@@ -116,11 +122,11 @@ export const generateReactiveComment = async (state: GameState, event: string) =
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: `React to: ${event}. Tanglish roast.`,
+      contents: `Context: ${event}. React in savage Mixed Tanglish.`,
       config: { systemInstruction: getSystemInstruction(state.mode) },
     });
-    return res.text || "AJ: Logic piece-u joins! VJ: Semma mokka name.";
-  } catch (e) { return "AJ: Start the mash! VJ: Logic dead."; }
+    return res.text || "AJ: Logic piece joined! VJ: RIP IQ.";
+  } catch (e) { return "AJ: Start da! VJ: Waiting mokka."; }
 };
 
 export const generateTopicOptions = async (state: GameState) => {
@@ -128,14 +134,14 @@ export const generateTopicOptions = async (state: GameState) => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: "3 unique Tanglish categories for a radio game.",
+      contents: "3 hilarious savage Mixed Tanglish categories (e.g. Cinema Mokka, Local Logic).",
       config: { 
-        systemInstruction: "Return JSON string array.",
+        systemInstruction: "Return JSON string array in Mixed Tanglish.",
         responseMimeType: "application/json",
         responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
       },
     });
-    return JSON.parse(res.text || '["Cinema Mokka", "Food Logic", "Gubeer Humor"]');
+    return JSON.parse(res.text || '["Cinema Mokka", "Food Logic Crimes", "Gubeer Humor"]');
   } catch (e) { return ["Cinema", "Logic Crimes", "Food"]; }
 };
 
@@ -144,14 +150,15 @@ export const generateQuestion = async (state: GameState) => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: `Topic: ${state.topic}. Mode: ${state.mode}. Generate tricky Tanglish question.`,
+      contents: `Topic: ${state.topic}. Mode: ${state.mode}. Generate a tricky Mixed Tanglish radio question.`,
       config: { 
-        systemInstruction: getSystemInstruction(state.mode) + " Return JSON.",
+        systemInstruction: getSystemInstruction(state.mode) + " Return JSON. Options must be in Mixed Tanglish.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            textEn: { type: Type.STRING }, textTa: { type: Type.STRING },
+            textEn: { type: Type.STRING, description: "Question in Mixed Tanglish" },
+            textTa: { type: Type.STRING, description: "Tamil Translation" },
             options: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { en: { type: Type.STRING }, ta: { type: Type.STRING } } } },
             correctIndex: { type: Type.INTEGER }, explanation: { type: Type.STRING }
           },
@@ -160,7 +167,7 @@ export const generateQuestion = async (state: GameState) => {
       },
     });
     return JSON.parse(res.text || '{}');
-  } catch (e) { return { textEn: "Logic?", textTa: "லாஜிக்?", options: [{en: "A", ta: "அ"}], correctIndex: 0, explanation: "Gubeer!" }; }
+  } catch (e) { return { textEn: "Logic gaali?", textTa: "லாஜிக் காலி?", options: [{en: "A", ta: "அ"}], correctIndex: 0, explanation: "Gubeer!" }; }
 };
 
 function decode(base64: string): Uint8Array {

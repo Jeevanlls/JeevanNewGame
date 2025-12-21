@@ -69,4 +69,5 @@ export interface GameState {
   warmupQuestion?: string;
   reactions?: Reaction[];
   lastRoastTime?: number;
+  isPaused?: boolean;
 }
