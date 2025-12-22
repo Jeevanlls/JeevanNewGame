@@ -68,16 +68,18 @@ export const initAudio = async () => {
 
 const getSystemInstruction = (mode: GameMode) => {
   const modeVibe = mode === GameMode.ACTUALLY_GENIUS 
-    ? "MODE: ACTUALLY GENIUS. Target: Brainy logic. Reward geniuses. Roast those who guess like logic pieces. AJ is ruthless, VJ is unimpressed."
-    : "MODE: CONFIDENTLY WRONG. Target: Mokka chaos. Reward the dumbest, funniest, most illogical answers. AJ and VJ love gubeer stuff.";
+    ? "MODE: ACTUALLY GENIUS. Einstein pieces only. Roast the logic-less idiots. VJ is super judgmental."
+    : "MODE: CONFIDENTLY WRONG. Mokka logic wins. The more gubeer the better. AJ loves nonsense.";
 
-  return `You are AJ and VJ, a savage, high-energy Tanglish RJ duo from Chennai.
+  return `You are AJ and VJ, a savage radio duo from Chennai.
+  MANDATORY: 50% English + 50% Tamil Slang (Tanglish). 
+  STRICT RULES:
+  1. NO FORMAL ENGLISH (No "Welcome", No "Please", No "Let's begin").
+  2. USE SLANG: Gubeer, Mokka, Vera Level, Oyy, Dei, Logic Piece, Gaali, Scene-u, Bulp-u, Vera Maari, Kanda-ravi.
+  3. STRUCTURE: "AJ: [slang roast] VJ: [sarcastic burn/laugh]".
+  4. Max 10 words. 
   ${modeVibe}
-  MANDATORY: Use "Mixed Tanglish" (50% English + 50% Chennai Slang). 
-  NEVER speak formal English. NEVER speak pure Tamil. 
-  KEY SLANG: Gubeer, Mokka, Vera Level, Oyy, Dei, Logic Piece, Gaali, Bulp-u, Scene-u, Mandaiya mela kondai-va.
-  STRUCTURE: "AJ: [slang roasting] VJ: [sarcastic laughter/burn]". 
-  Max 10 words total. Be loud, funny, and aggressive. If lobby is empty or players are slow, ROAST THEM HARD.`;
+  If no players join, say: "AJ: Dei players enga da? VJ: Room empty-ah iruku. Logic Gaali."`;
 };
 
 export const speakText = async (text: string, mode: GameMode = GameMode.CONFIDENTLY_WRONG) => {
@@ -89,7 +91,7 @@ export const speakText = async (text: string, mode: GameMode = GameMode.CONFIDEN
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: `Generate raw high-octane Chennai radio banter (Mixed Tanglish): ${text}` }] }],
+      contents: [{ parts: [{ text: `High-octane aggressive Chennai radio banter (Mixed Tanglish): ${text}` }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
@@ -125,8 +127,8 @@ export const generateReactiveComment = async (state: GameState, event: string) =
       contents: `Context: ${event}. React in savage Mixed Tanglish.`,
       config: { systemInstruction: getSystemInstruction(state.mode) },
     });
-    return res.text || "AJ: Logic piece joined! VJ: RIP IQ.";
-  } catch (e) { return "AJ: Start da! VJ: Waiting mokka."; }
+    return res.text || "AJ: Logic piece joined! VJ: Semma mokka.";
+  } catch (e) { return "AJ: Radio live! VJ: Logic dead."; }
 };
 
 export const generateTopicOptions = async (state: GameState) => {
@@ -134,14 +136,14 @@ export const generateTopicOptions = async (state: GameState) => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: "3 hilarious savage Mixed Tanglish categories (e.g. Cinema Mokka, Local Logic).",
+      contents: "3 unique savage Mixed Tanglish categories (e.g. Cinema Mokka, Food Logic Crimes).",
       config: { 
         systemInstruction: "Return JSON string array in Mixed Tanglish.",
         responseMimeType: "application/json",
         responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
       },
     });
-    return JSON.parse(res.text || '["Cinema Mokka", "Food Logic Crimes", "Gubeer Humor"]');
+    return JSON.parse(res.text || '["Cinema Mokka", "Food Crimes", "Gubeer Humor"]');
   } catch (e) { return ["Cinema", "Logic Crimes", "Food"]; }
 };
 
@@ -152,12 +154,12 @@ export const generateQuestion = async (state: GameState) => {
       model: MODEL_SPEEDY,
       contents: `Topic: ${state.topic}. Mode: ${state.mode}. Generate a tricky Mixed Tanglish radio question.`,
       config: { 
-        systemInstruction: getSystemInstruction(state.mode) + " Return JSON. Options must be in Mixed Tanglish.",
+        systemInstruction: getSystemInstruction(state.mode) + " Return JSON. Question and options must be Mixed Tanglish.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            textEn: { type: Type.STRING, description: "Question in Mixed Tanglish" },
+            textEn: { type: Type.STRING, description: "Mixed Tanglish Question" },
             textTa: { type: Type.STRING, description: "Tamil Translation" },
             options: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { en: { type: Type.STRING }, ta: { type: Type.STRING } } } },
             correctIndex: { type: Type.INTEGER }, explanation: { type: Type.STRING }
