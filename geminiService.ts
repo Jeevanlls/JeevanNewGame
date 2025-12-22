@@ -10,28 +10,31 @@ let currentBPM = 110;
 
 const duckMusic = (isSpeaking: boolean) => {
   if (!musicGainNode || !sharedAudioCtx) return;
-  const target = isSpeaking ? 0.05 : 0.25;
+  const target = isSpeaking ? 0.03 : 0.35; // Increased base volume
   musicGainNode.gain.setTargetAtTime(target, sharedAudioCtx.currentTime, 0.2);
 };
 
 export const updateBGM = (stage: GameStage, urgency: number = 0, isPaused: boolean = false) => {
-  if (!sharedAudioCtx || isPaused) {
-    if (musicGainNode) musicGainNode.gain.setTargetAtTime(0, sharedAudioCtx?.currentTime || 0, 0.5);
+  if (!sharedAudioCtx) return;
+  
+  if (isPaused) {
+    if (musicGainNode) musicGainNode.gain.setTargetAtTime(0, sharedAudioCtx.currentTime, 0.5);
     return;
   }
   
   if (!musicGainNode) {
     musicGainNode = sharedAudioCtx.createGain();
-    musicGainNode.gain.setValueAtTime(0.25, sharedAudioCtx.currentTime);
+    musicGainNode.gain.setValueAtTime(0.35, sharedAudioCtx.currentTime);
     musicGainNode.connect(sharedAudioCtx.destination);
   } else {
-    musicGainNode.gain.setTargetAtTime(0.25, sharedAudioCtx.currentTime, 0.5);
+    musicGainNode.gain.setTargetAtTime(0.35, sharedAudioCtx.currentTime, 0.5);
   }
   
   let bpm = 110;
-  if (stage === GameStage.QUESTION) bpm = 130; 
-  if (stage === GameStage.REVEAL) bpm = 140;
+  if (stage === GameStage.QUESTION) bpm = 128; 
+  if (stage === GameStage.REVEAL) bpm = 145;
   if (stage === GameStage.TOPIC_SELECTION) bpm = 115;
+  if (stage === GameStage.LOADING) bpm = 150;
 
   if (bpm === currentBPM && musicInterval) return;
   
@@ -44,16 +47,46 @@ export const updateBGM = (stage: GameStage, urgency: number = 0, isPaused: boole
     if (!sharedAudioCtx || !musicGainNode) return;
     const time = sharedAudioCtx.currentTime;
     
+    // Kick Drum (Thumping radio bass)
     if (beat % 4 === 0) {
       const osc = sharedAudioCtx.createOscillator();
       const g = sharedAudioCtx.createGain();
-      osc.frequency.setValueAtTime(80, time);
-      osc.frequency.exponentialRampToValueAtTime(0.01, time + 0.2);
-      g.gain.setValueAtTime(0.4, time);
-      g.gain.exponentialRampToValueAtTime(0.001, time + 0.2);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(120, time);
+      osc.frequency.exponentialRampToValueAtTime(0.01, time + 0.3);
+      g.gain.setValueAtTime(0.6, time);
+      g.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
       osc.connect(g); g.connect(musicGainNode!);
-      osc.start(time); osc.stop(time + 0.2);
+      osc.start(time); osc.stop(time + 0.3);
     }
+    
+    // Snare/Hat (Crunchy radio static beat)
+    if (beat % 4 === 2 || beat % 8 === 7) {
+      const noise = sharedAudioCtx.createBufferSource();
+      const buffer = sharedAudioCtx.createBuffer(1, sharedAudioCtx.sampleRate * 0.1, sharedAudioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+      noise.buffer = buffer;
+      const g = sharedAudioCtx.createGain();
+      g.gain.setValueAtTime(0.1, time);
+      g.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
+      noise.connect(g); g.connect(musicGainNode!);
+      noise.start(time); noise.stop(time + 0.1);
+    }
+
+    // Melodic Synth (Techno radio vibe)
+    if (beat % 16 === 0 || beat % 16 === 3 || beat % 16 === 10) {
+      const osc = sharedAudioCtx.createOscillator();
+      const g = sharedAudioCtx.createGain();
+      osc.type = 'square';
+      const freqs = [110, 130, 165, 196];
+      osc.frequency.setValueAtTime(freqs[Math.floor(Math.random() * freqs.length)], time);
+      g.gain.setValueAtTime(0.05, time);
+      g.gain.exponentialRampToValueAtTime(0.001, time + 0.5);
+      osc.connect(g); g.connect(musicGainNode!);
+      osc.start(time); osc.stop(time + 0.5);
+    }
+
     beat = (beat + 1) % 16;
   }, interval / 2);
 };
@@ -62,29 +95,24 @@ export const initAudio = async () => {
   if (!sharedAudioCtx) {
     sharedAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
   }
-  if (sharedAudioCtx.state === 'suspended') await sharedAudioCtx.resume();
+  if (sharedAudioCtx.state === 'suspended') {
+    await sharedAudioCtx.resume();
+  }
   return sharedAudioCtx;
 };
 
 const getSystemInstruction = (state: GameState) => {
   const modeVibe = state.mode === GameMode.ACTUALLY_GENIUS 
-    ? "MODE: ACTUALLY GENIUS. Reward smart answers. Roast dumb logic."
-    : "MODE: CONFIDENTLY WRONG. Mokka logic is king. The more gubeer, the better.";
+    ? "MODE: ACTUALLY GENIUS. Reward high-IQ logic. Roast the gubeers."
+    : "MODE: CONFIDENTLY WRONG. Reward the biggest mokka answer. Smart answers get roasted.";
 
-  const playerContext = state.players.length > 0 
-    ? `Current Victims: ${state.players.map(p => `${p.name} (Score: ${p.score})`).join(', ')}.`
-    : "No victims have joined yet.";
-
-  return `You are AJ and VJ, a high-octane radio host duo from Chennai.
-  MANDATORY: 50% English + 50% Tamil Slang (Tanglish). 
-  PERSONALITIES: AJ is loud and judgmental. VJ is sarcastic and loves "mokka" jokes.
-  CURRENT GAME STATE: ${state.stage}. ${playerContext}
-  RULES:
-  1. NO INTROS. NO FORMALITY. 
-  2. Use slang: Gubeer, Mokka, Vera Level, Dei, Logic Piece, Gaali, Scene-u, Bulp-u, Kanda-ravi.
-  3. FORMAT: "AJ: [slang] VJ: [roast/burn]".
-  4. Max 12 words. Be savage.
-  ${modeVibe}`;
+  return `You are AJ and VJ, Chennai's #1 radio host duo. 
+  AJ: Aggressive, high-energy, uses "Dei", "Logic Piece", "Gaali".
+  VJ: Sarcastic, lazy, loves "Mokka", "Gubeer", "Semma scene-u".
+  MANDATORY: Speak in Tanglish (50% Tamil slang, 50% English). 
+  CONTEXT: Round ${state.round} of Mind Mash. Topic: ${state.topic || 'Random Logic'}.
+  ${modeVibe}
+  Max 10 words total. Break-neck speed energy.`;
 };
 
 export const speakText = async (text: string, mode: GameMode = GameMode.CONFIDENTLY_WRONG) => {
@@ -96,7 +124,7 @@ export const speakText = async (text: string, mode: GameMode = GameMode.CONFIDEN
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: `Chennai Radio Energy: ${text}` }] }],
+      contents: [{ parts: [{ text: `High Energy Radio Duo: ${text}` }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
@@ -116,7 +144,9 @@ export const speakText = async (text: string, mode: GameMode = GameMode.CONFIDEN
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(ctx.destination);
-      source.onended = () => duckMusic(false);
+      source.onended = () => {
+        duckMusic(false);
+      };
       source.start();
     }
   } catch (e) {
@@ -130,11 +160,11 @@ export const generateReactiveComment = async (state: GameState, event: string) =
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: `React to this event: ${event}. Keep it short and savage Mixed Tanglish.`,
+      contents: `Quick reaction to: ${event}. Tanglish slang only.`,
       config: { systemInstruction: getSystemInstruction(state) },
     });
-    return res.text || "AJ: Logic gaali! VJ: Semma mokka logic.";
-  } catch (e) { return "AJ: Live on air! VJ: Logic dead."; }
+    return res.text || "AJ: Logic gaali! VJ: Semma mokka logic piece.";
+  } catch (e) { return "AJ: Live on air! VJ: Mic check logic."; }
 };
 
 export const generateTopicOptions = async (state: GameState) => {
@@ -142,14 +172,14 @@ export const generateTopicOptions = async (state: GameState) => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: "List 3 crazy radio game topics in Mixed Tanglish.",
+      contents: "List 3 crazy radio game topics in Tanglish Slang.",
       config: { 
-        systemInstruction: "Return JSON array of 3 strings. Mixed Tanglish only.",
+        systemInstruction: "Return JSON array of 3 strings.",
         responseMimeType: "application/json",
         responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
       },
     });
-    return JSON.parse(res.text || '["Cinema Mokka", "Food Crimes", "Gubeer Logic"]');
+    return JSON.parse(res.text || '["Cinema Mokka", "Food Crimes", "Logic Piece Test"]');
   } catch (e) { return ["Cinema", "Food", "Logic"]; }
 };
 
@@ -158,16 +188,26 @@ export const generateQuestion = async (state: GameState) => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const res = await ai.models.generateContent({
       model: MODEL_SPEEDY,
-      contents: `Topic: ${state.topic}. Mode: ${state.mode}. Generate one savage question.`,
+      contents: `Generate a savage question for topic: ${state.topic}. Mode: ${state.mode}.`,
       config: { 
-        systemInstruction: getSystemInstruction(state) + " Return JSON. textEn must be Mixed Tanglish.",
+        systemInstruction: getSystemInstruction(state) + " Return JSON. textEn must be Tanglish.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
             textEn: { type: Type.STRING },
             textTa: { type: Type.STRING },
-            options: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { en: { type: Type.STRING }, ta: { type: Type.STRING } } } },
+            options: { 
+              type: Type.ARRAY, 
+              items: { 
+                type: Type.OBJECT, 
+                properties: { 
+                  en: { type: Type.STRING }, 
+                  ta: { type: Type.STRING } 
+                },
+                required: ['en', 'ta']
+              } 
+            },
             correctIndex: { type: Type.INTEGER },
             explanation: { type: Type.STRING }
           },
@@ -175,8 +215,24 @@ export const generateQuestion = async (state: GameState) => {
         }
       },
     });
-    return JSON.parse(res.text || '{}');
-  } catch (e) { return { textEn: "Logic piece test?", textTa: "டெஸ்ட்?", options: [{en: "A", ta: "அ"}], correctIndex: 0, explanation: "Gubeer!" }; }
+    const parsed = JSON.parse(res.text || '{}');
+    if (!parsed.options || parsed.options.length < 2) throw new Error("Invalid Question Format");
+    return parsed;
+  } catch (e) { 
+    console.error("AI Question Failed, using fallback", e);
+    return { 
+      textEn: "Which logic piece here is the biggest mokka?", 
+      textTa: "இதில் எது பெரிய மொக்கை லாஜிக்?", 
+      options: [
+        {en: "Me", ta: "நான்"}, 
+        {en: "This Game", ta: "இந்த கேம்"},
+        {en: "AJ's Face", ta: "AJ-வின் முகம்"},
+        {en: "VJ's Voice", ta: "VJ-வின் குரல்"}
+      ], 
+      correctIndex: 0, 
+      explanation: "Exactly! Logic is fully gaali today." 
+    }; 
+  }
 };
 
 function decode(base64: string): Uint8Array {
