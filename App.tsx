@@ -18,90 +18,101 @@ const App: React.FC = () => {
     return params.get('room')?.toUpperCase() || '';
   });
 
-  // Scope playerId to the roomCode to allow multiple room support and prevent cross-room session contamination
-  const getStorageKey = (code: string) => `AJ_PLAYER_ID_${code}`;
-  const [playerId, setPlayerId] = useState<string>(() => {
-    const code = new URLSearchParams(window.location.search).get('room')?.toUpperCase();
-    return code ? localStorage.getItem(getStorageKey(code)) || '' : '';
-  });
-
+  const [playerId, setPlayerId] = useState<string>('');
+  const [isInitializing, setIsInitializing] = useState(true);
   const [hostMessage, setHostMessage] = useState<string>('AJ & VJ ON-AIR WAITING...');
   const [audioEnabled, setAudioEnabled] = useState(false);
   
   const [state, setState] = useState<GameState>({
-    roomCode: roomCode, stage: GameStage.LOBBY, players: [], mode: GameMode.CONFIDENTLY_WRONG,
+    roomCode: '', stage: GameStage.LOBBY, players: [], mode: GameMode.CONFIDENTLY_WRONG,
     language: Language.MIXED, round: 1, history: [], topicOptions: [], reactions: [], isPaused: false
   });
 
-  // 1. Initial Room Setup for TV
+  const getStorageKey = (code: string) => `MIND_MASH_PLAYER_${code}`;
+
+  // 1. Initial Room Setup
   useEffect(() => {
-    if (viewMode === 'TV' && !roomCode && db) {
-      const code = Math.random().toString(36).substring(2, 6).toUpperCase();
-      setRoomCode(code);
-      const initialState: GameState = {
-        roomCode: code,
-        stage: GameStage.LOBBY,
-        players: [],
-        mode: GameMode.CONFIDENTLY_WRONG,
-        language: Language.MIXED,
-        round: 1,
-        history: [],
-        topicOptions: [],
-        reactions: [],
-        isPaused: false
-      };
-      setDoc(doc(db, "games", code), initialState);
-    }
+    const init = async () => {
+      if (viewMode === 'TV' && !roomCode && db) {
+        const code = Math.random().toString(36).substring(2, 6).toUpperCase();
+        console.log("TV: Creating Room", code);
+        const initialState: GameState = {
+          roomCode: code,
+          stage: GameStage.LOBBY,
+          players: [],
+          mode: GameMode.CONFIDENTLY_WRONG,
+          language: Language.MIXED,
+          round: 1,
+          history: [],
+          topicOptions: [],
+          reactions: [],
+          isPaused: false
+        };
+        try {
+          await setDoc(doc(db, "games", code), initialState);
+          setRoomCode(code);
+        } catch (e) {
+          console.error("TV Init Failed", e);
+        }
+      } else if (viewMode === 'PHONE' && roomCode) {
+        // Load existing player ID from storage for this specific room
+        const storedId = localStorage.getItem(getStorageKey(roomCode));
+        if (storedId) setPlayerId(storedId);
+      }
+      setIsInitializing(false);
+    };
+    init();
   }, [viewMode, db]);
 
   // 2. Real-time Subscription
   useEffect(() => {
-    if (!roomCode || !db) return;
+    if (!roomCode || !db || isInitializing) return;
+    
+    console.log(`Subscribing to Room: ${roomCode}`);
     const unsub = onSnapshot(doc(db, "games", roomCode), (snapshot) => {
       if (snapshot.exists()) {
         const newState = snapshot.data() as GameState;
         setState(newState);
         
-        // Validation: If we have a playerId but it's not in the players list, 
-        // it means the player was likely removed or the room was reset.
+        // Reconnection Logic: If player session exists but they aren't in the list, re-auth or clear
         if (viewMode === 'PHONE' && playerId) {
-          const stillInGame = newState.players.some(p => p.id === playerId);
-          if (!stillInGame && newState.stage !== GameStage.LOADING) {
-             // If player is not in the list anymore, clear local storage and reset state to allow re-join
-             console.log("Player not found in room state, resetting session...");
-             localStorage.removeItem(getStorageKey(roomCode));
+          const isPlayerInRoom = newState.players.some(p => p.id === playerId);
+          if (!isPlayerInRoom && newState.players.length > 0 && newState.stage !== GameStage.LOADING) {
+             console.log("Session stale, clearing player ID");
              setPlayerId('');
+             localStorage.removeItem(getStorageKey(roomCode));
           }
         }
 
         if (viewMode === 'TV' && audioEnabled) {
           gemini.updateBGM(newState.stage, 0, newState.isPaused);
         }
+      } else {
+        console.warn("Room document does not exist yet.");
       }
+    }, (error) => {
+      console.error("Firestore Subscription Error:", error);
     });
+    
     return unsub;
-  }, [roomCode, audioEnabled, viewMode, playerId]);
+  }, [roomCode, db, isInitializing, audioEnabled, viewMode, playerId]);
 
   const sync = async (updates: Partial<GameState>) => {
     if (!db || !roomCode) return;
-    const roomRef = doc(db, "games", roomCode);
     try {
-      await updateDoc(roomRef, updates);
+      await updateDoc(doc(db, "games", roomCode), updates);
     } catch (e) {
-      console.error("Cloud Sync Error:", e);
+      console.error("Sync Error:", e);
     }
   };
 
-  // 3. Automatic Stage Management (TV ONLY)
+  // 3. Game Lifecycle (TV ONLY)
   useEffect(() => {
-    if (viewMode !== 'TV' || state.isPaused) return;
+    if (viewMode !== 'TV' || state.isPaused || state.stage !== GameStage.QUESTION) return;
 
-    if (state.stage === GameStage.QUESTION && state.players.length > 0) {
-      const allAnswered = state.players.every(p => !!p.lastAnswer);
-      if (allAnswered) {
-        const timer = setTimeout(() => handleRoundEnd(), 2000);
-        return () => clearTimeout(timer);
-      }
+    if (state.players.length > 0 && state.players.every(p => !!p.lastAnswer)) {
+      const timer = setTimeout(() => handleRoundEnd(), 2000);
+      return () => clearTimeout(timer);
     }
   }, [state.players, state.stage, state.isPaused, viewMode]);
 
@@ -118,7 +129,7 @@ const App: React.FC = () => {
       return { ...p, score: p.score + points };
     });
 
-    const commentary = await gemini.generateReactiveComment(state, "Round finished. Feedback time.");
+    const commentary = await gemini.generateReactiveComment(state, "Round over. Reveal the truth.");
     setHostMessage(commentary);
     gemini.speakText(commentary, state.mode);
 
@@ -129,30 +140,22 @@ const App: React.FC = () => {
         currentQuestion: undefined,
         topic: ''
       });
-    }, 10000);
+    }, 8000);
   };
 
-  const handleJoin = async (name: string, age: number, lang: Language) => {
+  const handleJoin = async (name: string) => {
     if (!db || !roomCode) return;
     
-    // Check if player with this ID already exists in the room (reconnection safety)
-    const id = playerId || Math.random().toString(36).substr(2, 9);
-    const existingPlayer = state.players.find(p => p.id === id);
+    const id = Math.random().toString(36).substr(2, 9);
+    const newPlayer: Player = { 
+      id, name, age: 25, score: 0, traits: [], preferredLanguage: Language.MIXED 
+    };
     
-    if (existingPlayer) {
-      // Already in, just set the local ID (though it should already be set)
-      setPlayerId(id);
-      localStorage.setItem(getStorageKey(roomCode), id);
-      return;
-    }
-
-    const newPlayer: Player = { id, name, age, score: 0, traits: [], preferredLanguage: lang };
-    const roomRef = doc(db, "games", roomCode);
-    await updateDoc(roomRef, { players: arrayUnion(newPlayer) });
+    await updateDoc(doc(db, "games", roomCode), { players: arrayUnion(newPlayer) });
     setPlayerId(id);
     localStorage.setItem(getStorageKey(roomCode), id);
 
-    const msg = await gemini.generateReactiveComment(state, `${name} joined.`);
+    const msg = await gemini.generateReactiveComment({ ...state, players: [...state.players, newPlayer] }, `${name} joined.`);
     setHostMessage(msg);
     gemini.speakText(msg, state.mode);
   };
@@ -163,10 +166,22 @@ const App: React.FC = () => {
     const options = await gemini.generateTopicOptions(state);
     const pickerId = state.players[Math.floor(Math.random() * state.players.length)].id;
     sync({ stage: GameStage.TOPIC_SELECTION, topicOptions: options, topicPickerId: pickerId });
-    const msg = "AJ: Let's start da! VJ: Topic pick pannu logic piece.";
+    
+    const msg = await gemini.generateReactiveComment(state, "Starting game. Selecting topic picker.");
     setHostMessage(msg);
     gemini.speakText(msg, state.mode);
   };
+
+  if (isInitializing) {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-black gap-6">
+        <div className="w-16 h-16 border-4 border-fuchsia-500 border-t-transparent rounded-full animate-spin"></div>
+        <p className="font-black text-2xl uppercase tracking-widest text-white/50 animate-pulse">
+          Connecting to Frequency...
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen w-screen bg-[#020617] text-white overflow-hidden font-game select-none">
@@ -177,7 +192,7 @@ const App: React.FC = () => {
             hostMessage={hostMessage} 
             iqData="" 
             onReset={() => sync({ stage: GameStage.LOBBY, players: state.players.map(p => ({...p, score: 0, lastAnswer: ''})), currentQuestion: undefined })} 
-            onStop={() => sync({ stage: GameStage.LOBBY, currentQuestion: undefined })} 
+            onStop={() => sync({ stage: GameStage.LOBBY, currentQuestion: undefined, topic: '' })} 
           />
           
           <div className="fixed bottom-0 left-0 w-full p-10 flex justify-center items-center gap-6 bg-gradient-to-t from-black via-black/80 to-transparent z-[999]">
@@ -194,7 +209,7 @@ const App: React.FC = () => {
                   <button 
                     onClick={handleStartGame} 
                     disabled={state.players.length === 0} 
-                    className="bg-fuchsia-600 px-24 py-10 rounded-full text-5xl font-black border-4 border-white shadow-3xl uppercase transition-all hover:bg-fuchsia-500 disabled:opacity-30"
+                    className="bg-fuchsia-600 px-24 py-10 rounded-full text-5xl font-black border-4 border-white shadow-3xl uppercase transition-all hover:bg-fuchsia-500 disabled:opacity-30 disabled:scale-90"
                   >
                     GO LIVE 🚀
                   </button>
@@ -208,7 +223,7 @@ const App: React.FC = () => {
                       {state.isPaused ? 'RESUME ▶️' : 'PAUSE ⏸️'}
                     </button>
                     <button 
-                      onClick={() => sync({ stage: GameStage.LOBBY, currentQuestion: undefined, isPaused: false })} 
+                      onClick={() => sync({ stage: GameStage.LOBBY, currentQuestion: undefined, isPaused: false, topic: '' })} 
                       className="bg-red-600 px-12 py-6 rounded-full font-black text-2xl border-4 border-white"
                     >
                       STOP ⏹️
@@ -234,7 +249,7 @@ const App: React.FC = () => {
             sync({ players: updated });
           }} 
           onRoast={async () => {
-             const roast = await gemini.generateReactiveComment(state, "Player requested a roast.");
+             const roast = await gemini.generateReactiveComment(state, "Player requested a roast via mobile.");
              setHostMessage(roast);
              gemini.speakText(roast, state.mode);
           }}
